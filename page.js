@@ -57,7 +57,11 @@
     /** Image messages newer than `since` (unix seconds). No sender filtering. */
     async listNewImages({ chatId, since }) {
       await ready;
-      const msgs = await WPP.chat.getMessages(chatId, { count: -1, media: 'image' });
+      const found = await WPP.chat.getMessages(chatId, { count: -1, media: 'image' });
+      // On current builds getMessages goes through WhatsApp's media query and
+      // only filters by type, so images from other chats can come back. Keep
+      // this chat's own; `newest` must not be advanced by another chat either.
+      const msgs = found.filter((m) => m.id?.remote?.toString() === chatId);
       const fresh = msgs
         .filter((m) => m.t > (since || 0))
         .sort((a, b) => a.t - b.t)
@@ -68,7 +72,10 @@
           w: m.width || 0,
           h: m.height || 0,
         }));
-      return { total: msgs.length, fresh, newest: msgs.reduce((a, m) => Math.max(a, m.t), 0) };
+      return {
+        total: msgs.length, fresh, otherChats: found.length - msgs.length,
+        newest: msgs.reduce((a, m) => Math.max(a, m.t), 0),
+      };
     },
 
     /** One image, as a data URL so it survives extension messaging. */

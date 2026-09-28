@@ -76,6 +76,12 @@ Each of these cost a debugging session. Do not "simplify" them away.
   for the detector throws at first inference, not at load. The recogniser is fine
   on WebGPU and is where the time actually goes (~0.3s per detected face, vs
   ~0.3s per photo for detection).
+- **The manifest CSP must include `'wasm-unsafe-eval'`.** Without an explicit
+  `content_security_policy.extension_pages`, the panel can get a bare
+  `script-src 'self'`, which blocks `WebAssembly.instantiate()`. ORT reports it
+  as `no available backend found ... CompileError ... Content Security policy`.
+  This permits WASM compilation only — not JS `eval` or remote code — so it does
+  not conflict with hard rule 2.
 - **`ort.env.wasm.numThreads = 1` is required.** Extension pages are not
   cross-origin isolated, so `SharedArrayBuffer` is unavailable and the threaded
   build aborts.
@@ -93,6 +99,17 @@ Each of these cost a debugging session. Do not "simplify" them away.
   abandoned after it returned 5 of 32 images.
 - **`getMessages` only sees the local store.** If a user reports missing older
   photos, the fix is scrolling back in that chat once, not a code change.
+- **`getMessages` with `media` is not scoped to the chat.** On current builds it
+  goes through WhatsApp's `msgFindQuery('media', …)` and wa-js filters only by
+  type, so other chats' images come back. `listNewImages` keeps messages whose
+  `id.remote` is the watched chat. Do not drop that filter — it also stops
+  `newest` (and so `lastSeen`) being advanced by another chat.
+- **Older media links expire.** WhatsApp's CDN URLs carry an expiry (`oe=`, hex
+  unix time); past it the fetch is a 403 and `downloadMedia` throws
+  `Media not found`. The app recovers by asking the sender's phone to re-upload —
+  do not trigger that (hard rule 1). This is why a never-seen watch only looks
+  back `FIRST_SCAN_DAYS` (10), scans newest first, and counts these failures
+  instead of logging each one.
 
 ## lib/face.js
 

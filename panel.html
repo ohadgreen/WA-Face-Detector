@@ -49,9 +49,12 @@
               font-size: 11px; font-variant-numeric: tabular-nums; }
   .hint { color: var(--muted); font-size: 11.5px; line-height: 1.5; }
   hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
-  .pick { margin-top: 5px; padding: 5px 8px; border-radius: 6px; font-size: 12px;
-          background: #f0f0f2; color: var(--muted); }
-  .pick.set { background: #eaf6ee; color: #14663c; font-weight: 600; }
+  .pick { display: flex; justify-content: space-between; gap: 8px; width: 100%;
+          margin-top: 5px; padding: 5px 8px; border: 0; border-radius: 6px; font: inherit;
+          font-size: 12px; text-align: left; background: #f0f0f2; color: var(--muted); }
+  .pick.set { background: #eaf6ee; color: #14663c; font-weight: 600; cursor: pointer; }
+  .pick.folded { padding: 8px 10px; font-size: 13px; outline: 1px solid #b9dfc8; }
+  .pick .chg { font-weight: 400; text-decoration: underline; white-space: nowrap; }
   select option:checked { background: #1a7f4b linear-gradient(0deg,#1a7f4b,#1a7f4b); color: #fff; }
 </style>
 </head>
@@ -76,6 +79,7 @@
       </div>
       <div class="grid" id="grid"></div>
     </div>
+    <button class="act ghost" id="stopBtn" hidden>Stop scan</button>
     <div id="log">idle</div>
   </section>
 
@@ -94,11 +98,11 @@
       <label>Watch this group</label>
       <input type="text" id="srcFilter" placeholder="filter by name..." style="margin-bottom:4px">
       <select id="srcGroup" size="6"></select>
-      <div class="pick" id="srcPick">nothing selected</div>
+      <button type="button" class="pick" id="srcPick">nothing selected</button>
       <label>Send matches to</label>
       <input type="text" id="dstFilter" placeholder="filter by name..." style="margin-bottom:4px">
       <select id="dstGroup" size="6"></select>
-      <div class="pick" id="dstPick">nothing selected</div>
+      <button type="button" class="pick" id="dstPick">nothing selected</button>
       <p class="hint">"Message yourself" is at the top &mdash; use it while testing.</p>
       <label>Child's name</label><input type="text" id="childName" placeholder="e.g. Nir">
       <label>Reference photos of that child</label>

@@ -127,6 +127,12 @@ async function thumbnail(dataUrl, size = 220) {
 const getWatches = async () => (await chrome.storage.local.get('watches')).watches || [];
 const setWatches = (w) => chrome.storage.local.set({ watches: w });
 
+// A watch that was never marked as seen only looks this far back. WhatsApp's
+// CDN links for older media expire (403, surfaced as "Media not found"), so a
+// full-history first scan spends most of its time on photos it cannot fetch.
+const FIRST_SCAN_DAYS = 10;
+const sinceOf = (w) => w.lastSeen || Math.floor(Date.now() / 1000) - FIRST_SCAN_DAYS * 86400;
+
 let groups = [], allChats = [];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -154,7 +160,7 @@ async function loadGroups() {
     const id = saved[key];
     const opt = id && $(selId).querySelector(`option[value="${CSS.escape(id)}"]`);
     if (opt) { $(selId).value = id; picked[which] = allChats.find((c) => c.id === id) || null; }
-    showPick(which);
+    setOpen(which, !picked[which]);
   }
   log(`${g.length} groups, ${people.length} direct chats`);
 }
@@ -164,11 +170,26 @@ async function loadGroups() {
    hidden-but-chosen row still counts. */
 const picked = { src: null, dst: null };
 
+const open = { src: true, dst: true };
+
 function showPick(which) {
   const el = $(which + 'Pick');
   const chat = picked[which];
-  el.textContent = chat ? chat.name : 'nothing selected';
+  el.innerHTML = chat
+    ? `<span>${esc(chat.name)}</span>` + (open[which] ? '' : '<span class="chg">change</span>')
+    : 'nothing selected';
   el.classList.toggle('set', !!chat);
+  el.classList.toggle('folded', !open[which]);
+}
+
+// Once a chat is picked the list folds away so the choice is what you see.
+// Only a picked side can fold; an empty one always shows its list.
+function setOpen(which, isOpen) {
+  open[which] = isOpen || !picked[which];
+  $(which + 'Filter').hidden = !open[which];
+  $(which + 'Group').hidden = !open[which];
+  showPick(which);
+  if (open[which]) $(which + 'Group').selectedOptions[0]?.scrollIntoView({ block: 'nearest' });
 }
 
 function applyFilter(boxId, selId) {
@@ -186,13 +207,25 @@ $('srcFilter').addEventListener('input', () => applyFilter('srcFilter', 'srcGrou
 $('dstFilter').addEventListener('input', () => applyFilter('dstFilter', 'dstGroup'));
 
 for (const [which, selId] of [['src', 'srcGroup'], ['dst', 'dstGroup']]) {
-  $(selId).addEventListener('change', async () => {
+  const record = () => {
     const id = $(selId).value;
+    if (!id) return;
     picked[which] = allChats.find((c) => c.id === id)
                  || groups.find((c) => c.id === id) || { id, name: id };
     showPick(which);
-    await chrome.storage.local.set({ ['last_' + which]: id });
+    chrome.storage.local.set({ ['last_' + which]: id });
+  };
+  $(selId).addEventListener('change', record);
+  // Fold on a deliberate pick (click or Enter), not on 'change': arrowing
+  // through the list fires 'change' on every row and would fold it mid-browse.
+  // Each records first so folding never depends on 'change' having fired yet.
+  $(selId).addEventListener('click', (e) => {
+    if (e.target.tagName === 'OPTION') { record(); setOpen(which, false); }
   });
+  $(selId).addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && $(selId).value) { e.preventDefault(); record(); setOpen(which, false); }
+  });
+  $(which + 'Pick').addEventListener('click', () => setOpen(which, !open[which]));
 }
 $('refreshGroups').addEventListener('click', () => loadGroups().catch((e) => log(e.message)));
 
@@ -245,11 +278,26 @@ async function renderSetup() {
     ? watches.map((w) => `<div class="row" style="justify-content:space-between;padding:6px 0;
         border-bottom:1px solid var(--line)">
         <span><b>${w.name}</b> <span class="muted">&larr; ${w.srcName}</span></span>
-        <button class="act ghost" data-del="${w.id}" style="padding:3px 9px;font-size:11px">Remove</button>
+        <span class="row" style="gap:4px">
+          <button class="act ghost" data-reset="${w.id}" style="padding:3px 9px;font-size:11px"
+            title="Forget last seen; the next check covers the last ${FIRST_SCAN_DAYS} days"
+            ${w.lastSeen ? '' : 'disabled'}>Reset</button>
+          <button class="act ghost" data-del="${w.id}" style="padding:3px 9px;font-size:11px">Remove</button>
+        </span>
       </div>`).join('')
     : '<p class="hint">Nothing yet.</p>';
   $('setupList').querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
     await setWatches((await getWatches()).filter((w) => w.id !== b.dataset.del));
+    await renderSetup(); await renderWatches();
+  }));
+  // Undo "Mark as seen" without re-embedding references: lastSeen goes back to
+  // never, so sinceOf() falls back to the first-scan window.
+  $('setupList').querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', async () => {
+    const watches = await getWatches();
+    const w = watches.find((x) => x.id === b.dataset.reset);
+    w.lastSeen = 0;
+    await setWatches(watches);
+    log(`${w.name}: last seen reset - next check covers the last ${FIRST_SCAN_DAYS} days`);
     await renderSetup(); await renderWatches();
   }));
 }
@@ -271,13 +319,14 @@ async function renderWatches() {
       </div>
       <p class="hint" style="margin:6px 0">${w.srcName} &rarr; ${w.dstName}
         &middot; threshold ${w.threshold}
-        &middot; last seen ${w.lastSeen ? new Date(w.lastSeen * 1000).toLocaleString() : 'never'}</p>
+        &middot; last seen ${w.lastSeen ? new Date(w.lastSeen * 1000).toLocaleString()
+          : `never (first check covers the last ${FIRST_SCAN_DAYS} days)`}</p>
       <button class="act" data-scan="${w.id}" disabled>Check for new photos</button>
     </div>`).join('');
 
   for (const w of watches) {
     try {
-      const { fresh } = await callPage('listNewImages', { chatId: w.src, since: w.lastSeen });
+      const { fresh } = await callPage('listNewImages', { chatId: w.src, since: sinceOf(w) });
       const pill = box.querySelector(`[data-count="${w.id}"]`);
       const btn = box.querySelector(`[data-scan="${w.id}"]`);
       if (fresh.length) {
@@ -295,17 +344,35 @@ async function renderWatches() {
 }
 
 let current = null;
+let stopRequested = false;
+
+$('stopBtn').addEventListener('click', () => {
+  stopRequested = true;
+  $('stopBtn').disabled = true;
+  log('stopping after the current photo...');
+});
 
 async function scan(w) {
   if (!(await ensureModels())) { log('set up the models first'); return; }
-  const { fresh, newest } = await callPage('listNewImages', { chatId: w.src, since: w.lastSeen });
-  log(`\n${w.name}: ${fresh.length} new photos`);
+  const { fresh, newest, otherChats } = await callPage('listNewImages', { chatId: w.src, since: sinceOf(w) });
+  // Newest first: recent photos are the ones wanted, and the ones whose
+  // media links are still valid. A stopped scan has covered the latest.
+  fresh.sort((a, b) => b.t - a.t);
+  log(`\n${w.name}: ${fresh.length} new photos` +
+      (w.lastSeen ? '' : ` (first check: last ${FIRST_SCAN_DAYS} days)`));
+  if (otherChats) log(`  ignored ${otherChats} image(s) WhatsApp returned from other chats`);
   const refs = w.refs.map((r) => Float32Array.from(r));
   const rows = [];
   const t0 = performance.now();
+  let unavailable = 0, done = 0;
 
+  stopRequested = false;
+  $('stopBtn').disabled = false;
+  $('stopBtn').hidden = false;
   for (let i = 0; i < fresh.length; i++) {
+    if (stopRequested) break;
     const m = fresh[i];
+    done = i + 1;
     try {
       const { dataUrl } = await callPage('downloadImage', { id: m.id });
       const img = await decode(dataUrl);
@@ -320,22 +387,34 @@ async function scan(w) {
       const el = (performance.now() - t0) / 1000;
       log(`  [${i + 1}/${fresh.length}] ${detected} faces, best ${best.toFixed(3)}` +
           `  ${(el / (i + 1)).toFixed(1)}s/photo  eta ${Math.round(el / (i + 1) * (fresh.length - i - 1))}s`);
-    } catch (e) { log(`  [${i + 1}] failed: ${e.message}`); }
+    } catch (e) {
+      // Expired CDN links are expected for older media; count them rather
+      // than filling the log. Anything else is a real error and is shown.
+      if (/media not found/i.test(e.message)) unavailable++;
+      else log(`  [${i + 1}] failed: ${e.message}`);
+    }
   }
+  $('stopBtn').hidden = true;
 
+  const skipped = fresh.length - done;
+  if (skipped) log(`stopped after ${done} of ${fresh.length} photos`);
+  if (unavailable) log(`${unavailable} photo(s) no longer available on WhatsApp (too old)`);
   rows.sort((a, b) => b.score - a.score);
-  current = { watch: w, rows, newest };
+  current = { watch: w, rows, newest, skipped };
   log(`${rows.length} match(es) above ${w.threshold}`);
   renderReview();
 }
 
 function renderReview() {
-  const { watch, rows } = current;
+  const { watch, rows, skipped } = current;
   $('reviewCard').hidden = false;
   $('reviewTitle').textContent = `${rows.length} photo(s) of ${watch.name}`;
-  $('reviewHint').textContent = rows.length
+  $('reviewHint').textContent = (rows.length
     ? `Untick anything wrong, then add them to ${watch.dstName}. You press Enter to send.`
-    : 'Nothing matched. "Mark as seen" to skip these next time.';
+    : 'Nothing matched. "Mark as seen" to skip these next time.')
+    // lastSeen is a single timestamp, so marking a stopped scan as seen also
+    // skips the older photos it never reached. Say so before they click.
+    + (skipped ? ` Scan was stopped: "Mark as seen" also skips the ${skipped} older photo(s) not checked.` : '');
   $('grid').innerHTML = rows.map((r, i) => `
     <label class="thumb"><img src="${r.thumb}">
       <span class="s"><input type="checkbox" data-i="${i}" checked>${r.score.toFixed(3)}
