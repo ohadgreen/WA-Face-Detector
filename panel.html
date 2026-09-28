@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Class Photo Filter</title>
+<style>
+  :root { color-scheme: light; --line:#e2e2e6; --muted:#6b6b70; --accent:#1a7f4b; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; margin: 0; font-size: 13px;
+         background: #f7f7f8; color: #16161a; }
+  header { background: #fff; border-bottom: 1px solid var(--line); padding: 12px 14px;
+           display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 14px; margin: 0; flex: 1; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button { border: 1px solid var(--line); background: #fff; border-radius: 6px;
+                 padding: 5px 10px; cursor: pointer; font-size: 12px; }
+  .tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  main { padding: 14px; }
+  section.pane { display: none; }
+  section.pane.on { display: block; }
+  .card { background: #fff; border: 1px solid var(--line); border-radius: 9px;
+          padding: 12px; margin-bottom: 12px; }
+  .card h2 { font-size: 13px; margin: 0 0 8px; }
+  label { display: block; margin: 8px 0 3px; color: var(--muted); font-size: 11.5px;
+          text-transform: uppercase; letter-spacing: .03em; }
+  select, input[type=text], input[type=number] { width: 100%; padding: 6px 8px;
+          border: 1px solid var(--line); border-radius: 6px; font-size: 13px; background: #fff; }
+  input[type=file] { font-size: 11px; width: 100%; }
+  button.act { background: var(--accent); color: #fff; border: 0; border-radius: 7px;
+               padding: 9px 14px; font-size: 13px; cursor: pointer; }
+  button.act.ghost { background: #fff; color: #16161a; border: 1px solid var(--line); }
+  button.act:disabled { opacity: .45; cursor: default; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .muted { color: var(--muted); }
+  .watch { border-left: 3px solid var(--accent); }
+  .watch .title { font-weight: 650; font-size: 13.5px; }
+  .pill { background: #eaf6ee; color: #14663c; border-radius: 20px; padding: 2px 9px;
+          font-size: 11px; font-weight: 650; }
+  .pill.none { background: #f0f0f2; color: var(--muted); }
+  #log { font-family: ui-monospace, Menlo, monospace; font-size: 10.5px; background: #15151a;
+         color: #d6d6d6; padding: 9px; border-radius: 7px; height: 110px; overflow: auto;
+         white-space: pre-wrap; margin-top: 10px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; }
+  .thumb { background: #fff; border: 1px solid var(--line); border-radius: 7px; padding: 5px;
+           cursor: pointer; display: block; }
+  .thumb:has(input:checked) { outline: 2.5px solid var(--accent); }
+  .thumb img { width: 100%; height: 88px; object-fit: cover; border-radius: 4px; background: #eee; }
+  .thumb .s { display: flex; align-items: center; gap: 5px; margin-top: 4px;
+              font-size: 11px; font-variant-numeric: tabular-nums; }
+  .hint { color: var(--muted); font-size: 11.5px; line-height: 1.5; }
+  hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+  .pick { margin-top: 5px; padding: 5px 8px; border-radius: 6px; font-size: 12px;
+          background: #f0f0f2; color: var(--muted); }
+  .pick.set { background: #eaf6ee; color: #14663c; font-weight: 600; }
+  select option:checked { background: #1a7f4b linear-gradient(0deg,#1a7f4b,#1a7f4b); color: #fff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Class Photo Filter</h1>
+  <div class="tabs">
+    <button id="tabRun" class="on">Photos</button>
+    <button id="tabSetup">Setup</button>
+  </div>
+</header>
+
+<main>
+  <section class="pane on" id="paneRun">
+    <div id="watchList"></div>
+    <div id="reviewCard" class="card" hidden>
+      <h2 id="reviewTitle">Matches</h2>
+      <p class="hint" id="reviewHint"></p>
+      <div class="row" style="margin:8px 0">
+        <button class="act" id="sendBtn">Add to composer</button>
+        <button class="act ghost" id="doneBtn">Mark as seen</button>
+      </div>
+      <div class="grid" id="grid"></div>
+    </div>
+    <div id="log">idle</div>
+  </section>
+
+  <section class="pane" id="paneSetup">
+    <div class="card">
+      <h2>Models</h2>
+      <p class="hint">Pick these once from <code>.insightface\models\buffalo_l\</code>.
+         They're stored in the extension and never asked for again.</p>
+      <div id="modelState" class="muted" style="margin:6px 0"></div>
+      <label>det_10g.onnx</label><input type="file" id="detFile" accept=".onnx">
+      <label>w600k_r50.onnx</label><input type="file" id="recFile" accept=".onnx">
+    </div>
+
+    <div class="card">
+      <h2>Add a group to watch</h2>
+      <label>Watch this group</label>
+      <input type="text" id="srcFilter" placeholder="filter by name..." style="margin-bottom:4px">
+      <select id="srcGroup" size="6"></select>
+      <div class="pick" id="srcPick">nothing selected</div>
+      <label>Send matches to</label>
+      <input type="text" id="dstFilter" placeholder="filter by name..." style="margin-bottom:4px">
+      <select id="dstGroup" size="6"></select>
+      <div class="pick" id="dstPick">nothing selected</div>
+      <p class="hint">"Message yourself" is at the top &mdash; use it while testing.</p>
+      <label>Child's name</label><input type="text" id="childName" placeholder="e.g. Nir">
+      <label>Reference photos of that child</label>
+      <input type="file" id="refFiles" accept="image/*" multiple>
+      <label>Match threshold</label><input type="number" id="thresh" value="0.35" step="0.01" min="0.05" max="0.9">
+      <p class="hint">Start at 0.35. Lower it if the child is usually far from the camera.</p>
+      <div class="row" style="margin-top:10px">
+        <button class="act" id="addWatch">Save watch</button>
+        <button class="act ghost" id="refreshGroups">Reload groups</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Saved watches</h2>
+      <div id="setupList"></div>
+    </div>
+  </section>
+</main>
+
+<script src="vendor/ort.all.min.js"></script>
+<script type="module" src="panel.js"></script>
+</body>
+</html>
