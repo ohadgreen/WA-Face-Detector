@@ -124,5 +124,17 @@
     }
   });
 
+  /* Events for the background's auto-watch. Metadata only: the image itself
+     is fetched later with downloadImage, one at a time. Every chat's images
+     are reported, because only the background knows which chats are watched. */
+  const emit = (type, data) => window.postMessage({ __cpf: 'evt', type, data }, '*');
+  ready.then(() => {
+    emit('ready');
+    WPP.on('chat.new_message', (m) => {
+      if (m?.type !== 'image') return;
+      emit('newImage', { id: String(m.id), chatId: String(m.id.remote), t: m.t });
+    });
+  });
+
   console.log('%c[class-photo-filter]', 'color:#1a7f4b;font-weight:700', 'page bridge ready');
 })();

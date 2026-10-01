@@ -8,9 +8,11 @@ without a keystroke from you.
 ## What it does
 
 1. Watches one or more WhatsApp groups (e.g. a class-parents group).
-2. When new photos appear, downloads them via WhatsApp Web's own data layer.
+2. When new photos arrive, checks them in the background — even with the side
+   panel closed — using WhatsApp Web's own data layer.
 3. Runs face detection + recognition against reference photos of your child.
-4. Shows the matches for review.
+4. Shows a badge on the extension icon and a Windows notification when there
+   are matches, and lists them for review.
 5. Pastes the ones you keep into a destination chat's composer. **You press Enter.**
 
 Each watch is independent, so one child per group with its own threshold and
@@ -33,7 +35,13 @@ Open WhatsApp Web, click the extension icon to open the side panel, and go to
    Python, or download the `buffalo_l` pack from the InsightFace model zoo. They
    land in `~/.insightface/models/buffalo_l/`.
 2. **Add a watch** — source group, destination, child's name, a few reference
-   photos, and a threshold.
+   photos, and a threshold. Leave **Auto-watch** ticked to have new photos
+   checked in the background.
+3. **Keep WhatsApp Web active** — in `chrome://settings/performance`, add
+   `web.whatsapp.com` to *Always keep these sites active*. Otherwise Chrome's
+   Memory Saver may unload the tab and background watching stops until you
+   return to it. Background watching only works while a WhatsApp Web tab is
+   open.
 
 Only the 512-float embeddings are stored, never the reference photos themselves.
 
@@ -48,16 +56,21 @@ gap between the lowest true match and the highest false one.
 
 | Change | What to do |
 |---|---|
-| `panel.js`, `panel.html`, `lib/` | Close and reopen the side panel |
+| `panel.js`, `panel.html` | Close and reopen the side panel |
+| `engine.js`, `engine.html`, `lib/`, `background.js`, `manifest.json` | Reload the extension, then refresh WhatsApp Web |
 | `page.js`, `relay.js` | Reload the extension, then refresh WhatsApp Web |
-| `manifest.json`, `background.js` | Reload the extension |
 
-`Alt+Shift+R` reloads the extension from anywhere in Chrome. It does not
-re-inject content scripts, so still refresh WhatsApp Web after touching those.
+`Alt+Shift+R` reloads the extension from anywhere in Chrome. Any reload
+disconnects the content scripts already running in open WhatsApp tabs, and
+they are not re-injected, so refresh WhatsApp Web after every reload.
+Otherwise the panel shows `Receiving end does not exist`.
+
+`npm test` runs the unit tests; `npm run check` syntax-checks every source file
+and the manifest's paths.
 
 ### Where the consoles are
 
-Four contexts, four separate consoles. An error in one is invisible in the others.
+Five contexts, five separate consoles. An error in one is invisible in the others.
 
 | Part | Where to look |
 |---|---|
@@ -65,24 +78,29 @@ Four contexts, four separate consoles. An error in one is invisible in the other
 | `relay.js` (ISOLATED world) | Same console, switch the context dropdown off `top` |
 | `panel.js` | Right-click inside the side panel → Inspect |
 | `background.js` | `chrome://extensions` → "service worker" |
+| `engine.js` | `chrome://extensions` → "Inspect views: engine.html" |
+
+Background activity also shows in the panel log, prefixed `[auto]`.
 
 `chrome://extensions` also grows an **Errors** button that aggregates across contexts.
 
 ## Architecture
 
 ```
-panel.js   extension origin. Owns the models (IndexedDB), ORT sessions,
-           face matching and all UI.
-   |  chrome.tabs.sendMessage
-relay.js   ISOLATED world. A dumb pipe; no logic.
+panel.js       extension origin. UI, model storage (IndexedDB), thumbnails.
+engine.js      offscreen document. ORT sessions and face matching.
+background.js  service worker. Auto-watch loop, badge, notifications.
+   |  chrome.tabs.sendMessage / chrome.runtime.sendMessage
+relay.js       ISOLATED world. A dumb pipe in both directions.
    |  window.postMessage
-page.js    MAIN world. The only file that touches wa-js / WhatsApp internals.
+page.js        MAIN world. The only file that touches wa-js / WhatsApp internals.
 ```
 
-Recognition lives in the panel because content scripts inherit the *page's*
-IndexedDB origin, which would mean re-picking 174MB of models on every WhatsApp
-reload. Images cross the boundary as data URLs, one at a time, which keeps memory
-flat regardless of batch size.
+Recognition lives in an offscreen extension page: content scripts inherit the
+*page's* IndexedDB origin, which would mean re-picking 174MB of models on every
+WhatsApp reload, and the side panel isn't running when it's closed. The engine
+keeps the models loaded while Chrome runs. Images cross each boundary as data
+URLs, one at a time, which keeps memory flat regardless of batch size.
 
 `lib/face.js` is a plain-JS port of InsightFace's SCRFD detection, 5-point
 similarity-transform alignment, and ArcFace embedding. It is verified against the
@@ -110,11 +128,15 @@ extension pages aren't cross-origin isolated, so `SharedArrayBuffer` is absent.
 
 ```
 manifest.json      MV3 manifest
-background.js      service worker: panel behaviour + reload hotkey
+background.js      service worker: auto-watch loop, badge, notifications, reload hotkey
+engine.html/.js    offscreen document: ONNX Runtime sessions and matching
 page.js            MAIN world bridge (wa-js)
 relay.js           ISOLATED world relay
-panel.html/.js     side panel UI and matching
+panel.html/.js     side panel UI
 lib/face.js        SCRFD + ArcFace in plain JS
+lib/auto-state.js  auto-watch queue and cursor rules (pure, unit-tested)
+tests/             node --test unit tests
 scripts/vendor.mjs copies runtime files from node_modules into vendor/
+scripts/check.mjs  syntax + manifest path check
 vendor/            gitignored; regenerate with `npm run vendor`
 ```

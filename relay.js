@@ -28,3 +28,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     .catch((e) => sendResponse({ ok: false, error: e.message }));
   return true;
 });
+
+// The other direction: page events (new images, ready) go to the background.
+// Still a pipe - which chats matter is decided there.
+window.addEventListener('message', (e) => {
+  if (e.source !== window || e.data?.__cpf !== 'evt') return;
+  try {
+    chrome.runtime.sendMessage({ __cpf: 'evt', type: e.data.type, data: e.data.data })
+      .catch(() => {}); // no listener awake yet; the next event or catch-up covers it
+  } catch { /* extension was reloaded; this tab needs a refresh to reconnect */ }
+});

@@ -6,7 +6,9 @@
   "type": "module",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
-    "postinstall": "node scripts/vendor.mjs"
+    "postinstall": "node scripts/vendor.mjs",
+    "check": "node scripts/check.mjs",
+    "test": "node --test \"tests/**/*.test.js\""
   },
   "devDependencies": {
     "@types/chrome": "^0.0.270",

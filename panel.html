@@ -8,13 +8,15 @@
   * { box-sizing: border-box; }
   body { font-family: system-ui, -apple-system, sans-serif; margin: 0; font-size: 13px;
          background: #f7f7f8; color: #16161a; }
-  header { background: #fff; border-bottom: 1px solid var(--line); padding: 12px 14px;
-           display: flex; align-items: center; gap: 10px; position: sticky; top: 0; z-index: 5; }
-  header h1 { font-size: 14px; margin: 0; flex: 1; }
-  .tabs { display: flex; gap: 4px; }
-  .tabs button { border: 1px solid var(--line); background: #fff; border-radius: 6px;
-                 padding: 5px 10px; cursor: pointer; font-size: 12px; }
-  .tabs button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
+  header { background: #fff; border-bottom: 1px solid var(--line); padding: 12px 14px 0;
+           position: sticky; top: 0; z-index: 5; }
+  header h1 { font-size: 14px; margin: 0 0 8px; }
+  .tabs { display: flex; gap: 2px; margin-bottom: -1px; }
+  .tabs button { border: 0; border-bottom: 2px solid transparent; background: none;
+                 padding: 7px 14px; cursor: pointer; font: inherit; font-size: 13px;
+                 font-weight: 600; color: var(--muted); }
+  .tabs button:hover { color: #16161a; }
+  .tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
   main { padding: 14px; }
   section.pane { display: none; }
   section.pane.on { display: block; }
@@ -55,16 +57,23 @@
   .pick.set { background: #eaf6ee; color: #14663c; font-weight: 600; cursor: pointer; }
   .pick.folded { padding: 8px 10px; font-size: 13px; outline: 1px solid #b9dfc8; }
   .pick .chg { font-weight: 400; text-decoration: underline; white-space: nowrap; }
+  label.check { display: flex; align-items: center; gap: 6px; margin: 10px 0 0;
+                text-transform: none; letter-spacing: 0; font-size: 12.5px; color: inherit; }
+  label.check.inline { margin: 0; font-size: 11px; color: var(--muted); }
+  .thumb.gone { cursor: default; }
+  .thumb .ph { height: 88px; display: flex; align-items: center; justify-content: center;
+               background: #eee; border-radius: 4px; color: var(--muted); font-size: 11px;
+               text-align: center; padding: 4px; }
   select option:checked { background: #1a7f4b linear-gradient(0deg,#1a7f4b,#1a7f4b); color: #fff; }
 </style>
 </head>
 <body>
 <header>
   <h1>Class Photo Filter</h1>
-  <div class="tabs">
-    <button id="tabRun" class="on">Photos</button>
-    <button id="tabSetup">Setup</button>
-  </div>
+  <nav class="tabs" role="tablist">
+    <button id="tabSetup" role="tab" aria-selected="false" aria-controls="paneSetup">Setup</button>
+    <button id="tabRun" role="tab" aria-selected="true" aria-controls="paneRun" class="on">Photos</button>
+  </nav>
 </header>
 
 <main>
@@ -103,14 +112,15 @@
       <input type="text" id="dstFilter" placeholder="filter by name..." style="margin-bottom:4px">
       <select id="dstGroup" size="6"></select>
       <button type="button" class="pick" id="dstPick">nothing selected</button>
-      <p class="hint">"Message yourself" is at the top &mdash; use it while testing.</p>
       <label>Child's name</label><input type="text" id="childName" placeholder="e.g. Nir">
       <label>Reference photos of that child</label>
       <input type="file" id="refFiles" accept="image/*" multiple>
       <label>Match threshold</label><input type="number" id="thresh" value="0.35" step="0.01" min="0.05" max="0.9">
       <p class="hint">Start at 0.35. Lower it if the child is usually far from the camera.</p>
+      <label class="check"><input type="checkbox" id="autoWatch" checked>
+        Auto-watch: check new photos in the background and alert me</label>
       <div class="row" style="margin-top:10px">
-        <button class="act" id="addWatch">Save watch</button>
+        <button class="act" id="addWatch" disabled>Save watch</button>
         <button class="act ghost" id="refreshGroups">Reload groups</button>
       </div>
     </div>
@@ -122,7 +132,6 @@
   </section>
 </main>
 
-<script src="vendor/ort.all.min.js"></script>
 <script type="module" src="panel.js"></script>
 </body>
 </html>

@@ -16,32 +16,60 @@ of WASM and the config cost outweighs the benefit.
 
 ## Architecture
 
-Four contexts. Getting these confused is the most common source of bugs.
+Five contexts. Getting these confused is the most common source of bugs.
 
 ```
 panel.js / panel.html    extension origin (chrome-extension://)
-                         owns: ORT sessions, IndexedDB models, face matching, all UI
+                         owns: all UI, model *storage* (IndexedDB), thumbnails
+                         calls the engine for embedding and manual scans
+engine.js / engine.html  offscreen document, extension origin
+                         owns: ORT sessions, lib/face.js, image decoding
+                         only chrome.runtime is available here - no storage, no tabs
+background.js            service worker (ES module)
+                         owns: the engine's lifecycle, the auto-watch loop,
+                         autoState + pending, badge, notifications, Alt+Shift+R
         |  chrome.tabs.sendMessage  ->  { __cpf:'call', action, args }
+        |  <-  chrome.runtime.sendMessage  { __cpf:'evt', type, data }
 relay.js                 ISOLATED content-script world
-                         a pipe with no logic; do not add logic here
-        |  window.postMessage  ->  { __cpf:'req', id, action, args }
+                         a pipe in both directions; do not add logic here
+        |  window.postMessage  <->  { __cpf:'req'|'res'|'evt', ... }
 page.js                  MAIN content-script world
                          the ONLY file that may touch wa-js or WhatsApp internals
-background.js            service worker: side-panel behaviour, Alt+Shift+R reload
 ```
 
-Adding a capability usually means: a new `actions.<name>` in `page.js`, then a
-`callPage('<name>', args)` from `panel.js`. `relay.js` needs no change — it
-forwards anything.
+Message tags: `call`/`req`/`res` are extension → page requests; `evt` is
+page → background events (`ready`, `newImage`); `engine` is a request to the
+engine; `bg` is a panel → background request. Every `chrome.runtime.sendMessage`
+reaches every extension context, so each listener ignores tags that aren't its own.
 
-### Why recognition lives in the panel
+Adding a page capability usually means a new `actions.<name>` in `page.js`,
+then `callPage('<name>', args)` from `panel.js` or `background.js`. `relay.js`
+needs no change — it forwards anything.
+
+### Why recognition lives in the engine page
 
 Content scripts inherit the **page's** IndexedDB origin (`web.whatsapp.com`), so
-models cached there would be re-requested constantly. The panel is a clean
-extension origin. Do not move inference into the content script.
+models cached there would be re-requested constantly. Extension pages share one
+clean origin, which is why both the panel (which stores the models) and the
+engine (which loads them) can use the same `cpf-models` database. The engine is
+an offscreen document so recognition keeps running when the side panel is
+closed. Do not move inference into a content script, and do not load ORT in
+the panel again — two copies means double the memory.
 
-Images cross the boundary as data URLs, **one at a time**. This is deliberate:
+Images cross each boundary as data URLs, **one at a time**. This is deliberate:
 memory stays flat regardless of batch size. Do not batch-transfer whole albums.
+
+### Auto-watch state
+
+`chrome.storage.local` has one writer per key: `watches` → panel;
+`autoState` and `pending` → background. The panel changes background state
+only by messaging it (`catchUp`, `markSeen`, `reset`). `pending` holds message
+ids and scores, never images.
+
+Each watch's cursor is `lastChecked` + `atChecked` (ids done at exactly that
+second), because album photos share a timestamp. The rules are in
+`lib/auto-state.js` and unit-tested in `tests/auto-state.test.js` — change
+them there, test-first.
 
 ## Hard rules
 
@@ -64,7 +92,8 @@ owner explicitly asking.
    are processed regardless of who posted them.
 5. **Work is only offered when there is work.** A watch with no new messages since
    `lastSeen` shows a disabled button. `lastSeen` only advances when the user
-   clicks "Mark as seen", so an interrupted scan costs nothing.
+   clicks "Mark as seen", or when "Add to composer" succeeds (which marks the
+   whole review as seen), so an interrupted scan costs nothing.
 6. **Never commit `vendor/` or `node_modules/`.** Regenerate with `npm run vendor`.
 
 ## The non-obvious technical constraints
@@ -110,6 +139,21 @@ Each of these cost a debugging session. Do not "simplify" them away.
   do not trigger that (hard rule 1). This is why a never-seen watch only looks
   back `FIRST_SCAN_DAYS` (10), scans newest first, and counts these failures
   instead of logging each one.
+- **Offscreen documents only get `chrome.runtime`.** The engine can't read
+  `chrome.storage` or reach tabs; the background passes it everything it needs.
+- **`sidePanel.open` needs a user gesture.** From a notification click it must
+  be called before any `await`. Chrome may refuse it anyway; the badge is the
+  fallback.
+- **Chrome's Memory Saver can discard the WhatsApp tab**, which stops all
+  events. Users should add `web.whatsapp.com` to *Always keep these sites
+  active* in `chrome://settings/performance`.
+- **Background catch-up runs on every worker start and every `ready` event,
+  not on a timer.** Photos WhatsApp syncs in bulk after sleep may not fire
+  `chat.new_message` and wait for the next trigger. A periodic check was
+  considered and deferred by the owner.
+- **Any extension reload disconnects the relay in open WhatsApp tabs.** Calls
+  to the page then fail with `Receiving end does not exist` until the tab is
+  refreshed — not only after `page.js`/`relay.js` changes.
 
 ## lib/face.js
 
@@ -141,13 +185,16 @@ to tune around, and not a bug to "fix".
 
 ## Verifying a change
 
-There are no automated tests. Before claiming something works:
+`npm test` runs the unit tests for `lib/auto-state.js` (Node's built-in
+runner, no dependencies). Everything that touches Chrome or WhatsApp is
+checked by hand. Before claiming something works:
 
-- `node --check` every changed file. `panel.js` and `lib/face.js` are ES modules;
-  the others are classic scripts.
-- Confirm `manifest.json` still parses and every referenced path exists.
-- Reload the extension, then **refresh WhatsApp Web** if `page.js` or `relay.js`
-  changed — content scripts are not re-injected by a reload.
+- `npm test` and `npm run check` (every source file parses; every path
+  `manifest.json` references exists). `panel.js`, `engine.js`, `background.js`
+  and `lib/*.js` are ES modules; `page.js` and `relay.js` are classic scripts.
+- Bump `manifest.json` `version` for every change to the extension.
+- Reload the extension, then **refresh WhatsApp Web** — every reload
+  disconnects the content scripts in open tabs, and they are not re-injected.
 - Watch the panel log. It is the primary diagnostic surface and shows per-photo
   progress, backend selection, and full error messages. Keep it that way: when
   adding a step that can fail, log before and after it. Truncating error strings
@@ -156,7 +203,9 @@ There are no automated tests. Before claiming something works:
 Check the right console for the context you changed — an error in one is
 invisible in the others. `panel.js`: right-click the side panel → Inspect.
 `page.js`/`relay.js`: WhatsApp Web's console. `background.js`:
-`chrome://extensions` → service worker.
+`chrome://extensions` → service worker. `engine.js`: `chrome://extensions` →
+*Inspect views: engine.html*. Background activity also appears in the panel
+log with an `[auto]` prefix.
 
 ## Style
 

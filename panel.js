@@ -1,4 +1,4 @@
-import { analyse, cosine } from './lib/face.js';
+import { isAuto } from './lib/auto-state.js';
 
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
@@ -10,12 +10,6 @@ const log = (s) => {
 window.addEventListener('error', (e) => log('ERROR: ' + e.message));
 window.addEventListener('unhandledrejection', (e) => log('ERROR: ' + (e.reason?.message || e.reason)));
 
-ort.env.wasm.wasmPaths = chrome.runtime.getURL('vendor/');
-ort.env.logLevel = 'error';
-// Extension pages aren't cross-origin isolated, so SharedArrayBuffer is unavailable
-// and the threaded build would abort. Pin to one thread.
-ort.env.wasm.numThreads = 1;
-
 /* ---------- talking to the page ---------- */
 
 async function callPage(action, args) {
@@ -25,6 +19,32 @@ async function callPage(action, args) {
   if (!res) throw new Error('no response from page - reload WhatsApp Web');
   if (!res.ok) throw new Error(res.error);
   return res.result;
+}
+
+/* ---------- the background and the engine ---------- */
+
+async function bg(op, args) {
+  const res = await chrome.runtime.sendMessage({ __cpf: 'bg', op, args });
+  if (!res?.ok) throw new Error('background: ' + (res?.error || 'no answer'));
+  return res.result;
+}
+
+// Recognition runs in the offscreen engine (engine.js). The background owns
+// its lifecycle, so make sure it exists before each call.
+async function engine(op, args) {
+  await bg('ensureEngine');
+  const res = await chrome.runtime.sendMessage({ __cpf: 'engine', op, args });
+  if (!res) throw new Error('engine did not answer');
+  if (!res.ok) throw new Error(res.error);
+  return res.result;
+}
+
+async function logEngine() {
+  const s = await engine('status');
+  if (!s.models) { log('engine: models not set up'); return; }
+  log(`engine: detector ${s.det}, recogniser ${s.rec} (${s.recMs}ms/face,` +
+      ` navigator.gpu ${s.gpu ? 'present' : 'absent'})`);
+  for (const n of s.notes) log('  ' + n);
 }
 
 /* ---------- model storage (IndexedDB, extension origin) ---------- */
@@ -51,30 +71,8 @@ const idbPut = async (k, v) => {
   });
 };
 
-let detSession = null, recSession = null;
-
-async function makeSession(buf, label, eps) {
-  for (const ep of eps) {
-    try {
-      const s = await ort.InferenceSession.create(new Uint8Array(buf), { executionProviders: [ep] });
-      log(`${label}: ${ep}`);
-      return s;
-    } catch (e) { log(`${label}: ${ep} failed - ${String(e.message || e)}`); }
-  }
-  throw new Error(label + ': no backend available');
-}
-
-async function ensureModels() {
-  if (detSession && recSession) return true;
-  const d = await idbGet('det'), r = await idbGet('rec');
-  if (!d || !r) return false;
-  log('loading models...');
-  // SCRFD uses an AveragePool variant WebGPU doesn't implement, so detector stays on WASM.
-  detSession = await makeSession(d, 'detector', ['wasm']);
-  recSession = await makeSession(r, 'recogniser', ['webgpu', 'wasm']);
-  log('models ready');
-  return true;
-}
+// Recognition runs in the engine (engine.js); this only asks whether it has models.
+const ensureModels = async () => (await engine('status')).models;
 
 async function showModelState() {
   const have = (await idbGet('det')) && (await idbGet('rec'));
@@ -87,29 +85,13 @@ for (const [inputId, key] of [['detFile', 'det'], ['recFile', 'rec']]) {
     if (!f) return;
     log(`storing ${f.name} (${(f.size / 1e6).toFixed(0)}MB)...`);
     await idbPut(key, await f.arrayBuffer());
-    detSession = recSession = null;
+    await engine('reload');
     await showModelState();
     log('stored');
   });
 }
 
 /* ---------- image helpers ---------- */
-
-async function decode(dataUrl, maxSide = 2048) {
-  const blob = await (await fetch(dataUrl)).blob();
-  const bmp = await createImageBitmap(blob, { imageOrientation: 'from-image' });
-  let { width: w, height: h } = bmp;
-  const longest = Math.max(w, h);
-  if (longest > maxSide) { const s = maxSide / longest; w = Math.round(w * s); h = Math.round(h * s); }
-  const cv = new OffscreenCanvas(w, h);
-  const cx = cv.getContext('2d', { willReadFrequently: true });
-  cx.drawImage(bmp, 0, 0, w, h);
-  bmp.close();
-  const d = cx.getImageData(0, 0, w, h).data;
-  const rgb = new Uint8Array(w * h * 3);
-  for (let i = 0; i < w * h; i++) { rgb[i * 3] = d[i * 4]; rgb[i * 3 + 1] = d[i * 4 + 1]; rgb[i * 3 + 2] = d[i * 4 + 2]; }
-  return { data: rgb, width: w, height: h };
-}
 
 async function thumbnail(dataUrl, size = 220) {
   const blob = await (await fetch(dataUrl)).blob();
@@ -130,6 +112,7 @@ const setWatches = (w) => chrome.storage.local.set({ watches: w });
 // A watch that was never marked as seen only looks this far back. WhatsApp's
 // CDN links for older media expire (403, surfaced as "Media not found"), so a
 // full-history first scan spends most of its time on photos it cannot fetch.
+// Duplicated in background.js - change both.
 const FIRST_SCAN_DAYS = 10;
 const sinceOf = (w) => w.lastSeen || Math.floor(Date.now() / 1000) - FIRST_SCAN_DAYS * 86400;
 
@@ -148,16 +131,16 @@ async function loadGroups() {
 
   const opt = (x) => `<option value="${x.id}">${esc(x.name)}</option>`;
   $('dstGroup').innerHTML =
-    (self ? `<optgroup label="Testing">${opt(self)}</optgroup>` : '') +
+    (self ? opt(self) : '') +
     `<optgroup label="Groups">${g.map(opt).join('')}</optgroup>` +
     `<optgroup label="Direct chats">${people.map(opt).join('')}</optgroup>`;
 
   applyFilters();
 
-  // restore whatever was chosen last time
+  // restore whatever was chosen last time; matches go to yourself by default
   const saved = await chrome.storage.local.get(['last_src', 'last_dst']);
   for (const [which, selId, key] of [['src', 'srcGroup', 'last_src'], ['dst', 'dstGroup', 'last_dst']]) {
-    const id = saved[key];
+    const id = saved[key] || (which === 'dst' ? self?.id : null);
     const opt = id && $(selId).querySelector(`option[value="${CSS.escape(id)}"]`);
     if (opt) { $(selId).value = id; picked[which] = allChats.find((c) => c.id === id) || null; }
     setOpen(which, !picked[which]);
@@ -180,7 +163,26 @@ function showPick(which) {
     : 'nothing selected';
   el.classList.toggle('set', !!chat);
   el.classList.toggle('folded', !open[which]);
+  updateSaveState();
 }
+
+// Save is offered only when the form is complete, and not while a save is
+// running (embedding takes seconds; a second click would save a duplicate).
+// A successful save clears the name and photos, which disables it again.
+let saving = false;
+function updateSaveState() {
+  const missing = [
+    !picked.src && 'group to watch',
+    !picked.dst && 'where to send matches',
+    !$('childName').value.trim() && "child's name",
+    !$('refFiles').files.length && 'reference photos',
+  ].filter(Boolean);
+  $('addWatch').disabled = saving || missing.length > 0;
+  $('addWatch').title = missing.length ? 'Still needed: ' + missing.join(', ') : '';
+}
+$('childName').addEventListener('input', updateSaveState);
+$('refFiles').addEventListener('change', updateSaveState);
+updateSaveState();
 
 // Once a chat is picked the list folds away so the choice is what you see.
 // Only a picked side can fold; an empty one always shows its list.
@@ -230,6 +232,8 @@ for (const [which, selId] of [['src', 'srcGroup'], ['dst', 'dstGroup']]) {
 $('refreshGroups').addEventListener('click', () => loadGroups().catch((e) => log(e.message)));
 
 $('addWatch').addEventListener('click', async () => {
+  saving = true;
+  updateSaveState();
   try {
     if (!(await ensureModels())) { log('set up the models first'); return; }
     const files = [...$('refFiles').files];
@@ -237,16 +241,14 @@ $('addWatch').addEventListener('click', async () => {
     const name = $('childName').value.trim() || 'child';
 
     log(`embedding ${files.length} reference photo(s)...`);
+    const dataUrls = [];
+    for (const f of files) dataUrls.push(await fileToDataUrl(f));
     const refs = [];
-    for (const f of files) {
-      const img = await decode(await fileToDataUrl(f));
-      const { faces } = await analyse(detSession, recSession, img,
-        { Tensor: ort.Tensor, minFace: 0, detSize: 640 });
-      if (!faces.length) { log(`  no face in ${f.name}, skipped`); continue; }
-      faces.sort((a, b) => b.px - a.px);
-      refs.push(Array.from(faces[0].embedding));
-      log(`  ${f.name}: ok (${faces[0].px}px)`);
-    }
+    (await engine('embed', { dataUrls })).forEach((r, i) => {
+      if (!r.ok) { log(`  no face in ${files[i].name}, skipped`); return; }
+      refs.push(r.embedding);
+      log(`  ${files[i].name}: ok (${r.px}px)`);
+    });
     if (!refs.length) { log('no usable references'); return; }
 
     if (!picked.src || !picked.dst) {
@@ -259,13 +261,19 @@ $('addWatch').addEventListener('click', async () => {
       src: picked.src.id, srcName: picked.src.name,
       dst: picked.dst.id, dstName: picked.dst.name,
       threshold: parseFloat($('thresh').value) || 0.35,
-      refs, lastSeen: 0,
+      refs, lastSeen: 0, auto: $('autoWatch').checked,
     });
     await setWatches(watches);
+    if ($('autoWatch').checked) await bg('catchUp');
     log(`saved: ${name} \u2014 watching "${picked.src.name}" \u2192 sending to "${picked.dst.name}"`);
     $('refFiles').value = ''; $('childName').value = '';
     await renderSetup(); await renderWatches();
   } catch (e) { log('ERROR: ' + e.message); }
+  finally {
+    // A failed save keeps the inputs, so the button comes back for a retry.
+    saving = false;
+    updateSaveState();
+  }
 });
 
 const fileToDataUrl = (f) => new Promise((res) => {
@@ -274,61 +282,104 @@ const fileToDataUrl = (f) => new Promise((res) => {
 
 async function renderSetup() {
   const watches = await getWatches();
+  const { pending = {} } = await chrome.storage.local.get('pending');
   $('setupList').innerHTML = watches.length
     ? watches.map((w) => `<div class="row" style="justify-content:space-between;padding:6px 0;
         border-bottom:1px solid var(--line)">
-        <span><b>${w.name}</b> <span class="muted">&larr; ${w.srcName}</span></span>
-        <span class="row" style="gap:4px">
+        <span><b>${esc(w.name)}</b> <span class="muted">&larr; ${esc(w.srcName)}</span></span>
+        <span class="row" style="gap:6px">
+          <label class="check inline" title="Check new photos in the background and alert me">
+            <input type="checkbox" data-auto="${w.id}" ${isAuto(w) ? 'checked' : ''}>Auto</label>
           <button class="act ghost" data-reset="${w.id}" style="padding:3px 9px;font-size:11px"
-            title="Forget last seen; the next check covers the last ${FIRST_SCAN_DAYS} days"
-            ${w.lastSeen ? '' : 'disabled'}>Reset</button>
+            title="Forget last seen and waiting matches; the next check covers the last ${FIRST_SCAN_DAYS} days"
+            ${w.lastSeen || pending[w.id]?.length ? '' : 'disabled'}>Reset</button>
           <button class="act ghost" data-del="${w.id}" style="padding:3px 9px;font-size:11px">Remove</button>
         </span>
       </div>`).join('')
     : '<p class="hint">Nothing yet.</p>';
-  $('setupList').querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', async () => {
+
+  const on = (sel, ev, fn) => $('setupList').querySelectorAll(sel).forEach((el) =>
+    el.addEventListener(ev, () => fn(el).catch((e) => log('ERROR: ' + e.message))));
+
+  // The panel writes `auto` (watches is panel-owned); the background re-reads
+  // watches before every photo, so turning it off takes effect at once.
+  on('[data-auto]', 'change', async (cb) => {
+    const all = await getWatches();
+    const w = all.find((x) => x.id === cb.dataset.auto);
+    w.auto = cb.checked;
+    await setWatches(all);
+    log(`${w.name}: auto-watch ${w.auto ? 'on' : 'off'}`);
+    if (w.auto) await bg('catchUp');
+    await renderWatches();
+  });
+
+  // Remove from watches first, so the background's catch-up can't recreate
+  // its state, then have the background forget it.
+  on('[data-del]', 'click', async (b) => {
     await setWatches((await getWatches()).filter((w) => w.id !== b.dataset.del));
+    await bg('reset', { watchId: b.dataset.del });
     await renderSetup(); await renderWatches();
-  }));
+  });
+
   // Undo "Mark as seen" without re-embedding references: lastSeen goes back to
-  // never, so sinceOf() falls back to the first-scan window.
-  $('setupList').querySelectorAll('[data-reset]').forEach((b) => b.addEventListener('click', async () => {
-    const watches = await getWatches();
-    const w = watches.find((x) => x.id === b.dataset.reset);
+  // never, and the background drops the cursor and waiting matches, so the
+  // next check covers the first-scan window again.
+  on('[data-reset]', 'click', async (b) => {
+    const all = await getWatches();
+    const w = all.find((x) => x.id === b.dataset.reset);
     w.lastSeen = 0;
-    await setWatches(watches);
-    log(`${w.name}: last seen reset - next check covers the last ${FIRST_SCAN_DAYS} days`);
+    await setWatches(all);
+    await bg('reset', { watchId: w.id });
+    log(`${w.name}: reset - next check covers the last ${FIRST_SCAN_DAYS} days`);
     await renderSetup(); await renderWatches();
-  }));
+  });
 }
 
 /* ---------- the run pane ---------- */
 
 async function renderWatches() {
   const watches = await getWatches();
+  const { pending = {}, autoState = {} } = await chrome.storage.local.get(['pending', 'autoState']);
   const box = $('watchList');
   if (!watches.length) {
     box.innerHTML = '<div class="card"><p class="hint">No watches yet. Open Setup to add one.</p></div>';
     return;
   }
-  box.innerHTML = watches.map((w) => `
+  const when = (t) => new Date(t * 1000).toLocaleString();
+  box.innerHTML = watches.map((w) => isAuto(w) ? `
     <div class="card watch" data-w="${w.id}">
       <div class="row" style="justify-content:space-between">
-        <span class="title">${w.name}</span>
+        <span class="title">${esc(w.name)}</span>
+        <span class="pill ${pending[w.id]?.length ? '' : 'none'}">${pending[w.id]?.length
+          ? `${pending[w.id].length} waiting` : 'watching'}</span>
+      </div>
+      <p class="hint" style="margin:6px 0">${esc(w.srcName)} &rarr; ${esc(w.dstName)}
+        &middot; threshold ${w.threshold} &middot; auto-watch on
+        &middot; checked up to ${autoState[w.id] ? when(autoState[w.id].lastChecked) : 'not yet'}</p>
+      <button class="act" data-review="${w.id}" ${pending[w.id]?.length ? '' : 'disabled'}>${pending[w.id]?.length
+        ? `Review ${pending[w.id].length} photo(s) of ${esc(w.name)}` : 'No matches waiting'}</button>
+    </div>` : `
+    <div class="card watch" data-w="${w.id}">
+      <div class="row" style="justify-content:space-between">
+        <span class="title">${esc(w.name)}</span>
         <span class="pill none" data-count="${w.id}">checking...</span>
       </div>
-      <p class="hint" style="margin:6px 0">${w.srcName} &rarr; ${w.dstName}
+      <p class="hint" style="margin:6px 0">${esc(w.srcName)} &rarr; ${esc(w.dstName)}
         &middot; threshold ${w.threshold}
-        &middot; last seen ${w.lastSeen ? new Date(w.lastSeen * 1000).toLocaleString()
+        &middot; last seen ${w.lastSeen ? when(w.lastSeen)
           : `never (first check covers the last ${FIRST_SCAN_DAYS} days)`}</p>
       <button class="act" data-scan="${w.id}" disabled>Check for new photos</button>
     </div>`).join('');
 
-  for (const w of watches) {
+  box.querySelectorAll('[data-review]').forEach((b) => b.addEventListener('click', () =>
+    review(watches.find((w) => w.id === b.dataset.review)).catch((e) => log('ERROR: ' + e.message))));
+
+  for (const w of watches.filter((x) => !isAuto(x))) {
     try {
       const { fresh } = await callPage('listNewImages', { chatId: w.src, since: sinceOf(w) });
       const pill = box.querySelector(`[data-count="${w.id}"]`);
       const btn = box.querySelector(`[data-scan="${w.id}"]`);
+      if (!pill || !btn) continue; // re-rendered meanwhile
       if (fresh.length) {
         pill.textContent = `${fresh.length} new`;
         pill.className = 'pill';
@@ -361,7 +412,6 @@ async function scan(w) {
   log(`\n${w.name}: ${fresh.length} new photos` +
       (w.lastSeen ? '' : ` (first check: last ${FIRST_SCAN_DAYS} days)`));
   if (otherChats) log(`  ignored ${otherChats} image(s) WhatsApp returned from other chats`);
-  const refs = w.refs.map((r) => Float32Array.from(r));
   const rows = [];
   const t0 = performance.now();
   let unavailable = 0, done = 0;
@@ -375,14 +425,8 @@ async function scan(w) {
     done = i + 1;
     try {
       const { dataUrl } = await callPage('downloadImage', { id: m.id });
-      const img = await decode(dataUrl);
-      const { faces, detected } = await analyse(detSession, recSession, img,
-        { Tensor: ort.Tensor, minFace: 30, detSize: 640 });
-      let best = 0, px = 0;
-      for (const f of faces) for (const r of refs) {
-        const c = cosine(r, f.embedding);
-        if (c > best) { best = c; px = f.px; }
-      }
+      const { detected, results: [{ best, px }] } = await engine('analyse',
+        { dataUrl, watches: [{ id: w.id, refs: w.refs, threshold: w.threshold }] });
       if (best >= w.threshold) rows.push({ id: m.id, score: best, px, thumb: await thumbnail(dataUrl) });
       const el = (performance.now() - t0) / 1000;
       log(`  [${i + 1}/${fresh.length}] ${detected} faces, best ${best.toFixed(3)}` +
@@ -405,6 +449,28 @@ async function scan(w) {
   renderReview();
 }
 
+// Waiting matches hold ids and scores only (photos are never stored), so
+// each one is downloaded again here and thumbnailed in memory.
+async function review(w) {
+  const { pending = {}, autoState = {} } = await chrome.storage.local.get(['pending', 'autoState']);
+  const list = [...(pending[w.id] || [])].sort((a, b) => b.score - a.score);
+  // Read now, so matches that arrive during the review aren't covered by it.
+  const upTo = autoState[w.id]?.lastChecked || 0;
+  log(`\n${w.name}: loading ${list.length} waiting match(es)...`);
+  const rows = [];
+  for (const p of list) {
+    try {
+      const { dataUrl } = await callPage('downloadImage', { id: p.id });
+      rows.push({ id: p.id, score: p.score, px: p.px, thumb: await thumbnail(dataUrl) });
+    } catch (e) {
+      rows.push({ id: p.id, score: p.score, px: p.px, thumb: null,
+        gone: /media not found/i.test(e.message) ? 'no longer available' : e.message });
+    }
+  }
+  current = { watch: w, rows, auto: true, upTo, skipped: 0 };
+  renderReview();
+}
+
 function renderReview() {
   const { watch, rows, skipped } = current;
   $('reviewCard').hidden = false;
@@ -415,11 +481,13 @@ function renderReview() {
     // lastSeen is a single timestamp, so marking a stopped scan as seen also
     // skips the older photos it never reached. Say so before they click.
     + (skipped ? ` Scan was stopped: "Mark as seen" also skips the ${skipped} older photo(s) not checked.` : '');
-  $('grid').innerHTML = rows.map((r, i) => `
+  $('grid').innerHTML = rows.map((r, i) => r.thumb ? `
     <label class="thumb"><img src="${r.thumb}">
       <span class="s"><input type="checkbox" data-i="${i}" checked>${r.score.toFixed(3)}
-      <span class="muted">${r.px}px</span></span></label>`).join('');
-  $('sendBtn').disabled = !rows.length;
+      <span class="muted">${r.px}px</span></span></label>` : `
+    <div class="thumb gone"><div class="ph">${esc(r.gone)}</div>
+      <span class="s">${r.score.toFixed(3)} <span class="muted">${r.px}px</span></span></div>`).join('');
+  $('sendBtn').disabled = !rows.some((r) => r.thumb);
 }
 
 $('sendBtn').addEventListener('click', async () => {
@@ -430,29 +498,58 @@ $('sendBtn').addEventListener('click', async () => {
     log(`opening ${current.watch.dstName} and pasting ${picked.length} photo(s)...`);
     const res = await callPage('pasteToChat', { chatId: current.watch.dst, ids: picked });
     log(`${res.pasted} in the composer - switch to WhatsApp and press Enter`);
+    // Handled once pasted: the whole review (unticked rows included) is seen.
+    // A failed paste throws above and leaves the review open for a retry.
+    await markSeen();
   } catch (e) { log('ERROR: ' + e.message); }
 });
 
-$('doneBtn').addEventListener('click', async () => {
+async function markSeen() {
   const watches = await getWatches();
   const w = watches.find((x) => x.id === current.watch.id);
-  w.lastSeen = current.newest;
+  if (!w) throw new Error('that watch was removed');
+  w.lastSeen = current.auto ? Math.max(w.lastSeen || 0, current.upTo) : current.newest;
   await setWatches(watches);
+  // Only the rows shown here: matches that arrived during the review stay waiting.
+  if (current.auto) await bg('markSeen', { watchId: w.id, ids: current.rows.map((r) => r.id) });
   $('reviewCard').hidden = true;
   current = null;
   log('marked as seen');
-  await renderWatches();
+  await renderWatches(); await renderSetup();
+}
+
+$('doneBtn').addEventListener('click', () => markSeen().catch((e) => log('ERROR: ' + e.message)));
+
+/* ---------- background activity ---------- */
+
+// The background keeps its own short log in session storage; show it here so
+// the panel stays the one place to look.
+let autoSeq = 0;
+function showAutoLog(entries = []) {
+  for (const { n, s } of entries) if (n > autoSeq) { autoSeq = n; log('[auto] ' + s); }
+}
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'session' && changes.autoLog) showAutoLog(changes.autoLog.newValue);
+  if (area === 'local' && changes.pending) {
+    renderWatches().catch((e) => log(e.message));
+    renderSetup().catch((e) => log(e.message));
+  }
 });
 
 /* ---------- tabs ---------- */
 
-$('tabRun').addEventListener('click', () => {
-  $('tabRun').classList.add('on'); $('tabSetup').classList.remove('on');
-  $('paneRun').classList.add('on'); $('paneSetup').classList.remove('on');
-});
+function showTab(which) {
+  for (const [tab, pane] of [['tabRun', 'paneRun'], ['tabSetup', 'paneSetup']]) {
+    const on = tab === which;
+    $(tab).classList.toggle('on', on);
+    $(tab).setAttribute('aria-selected', on);
+    $(pane).classList.toggle('on', on);
+  }
+}
+$('tabRun').addEventListener('click', () => showTab('tabRun'));
 $('tabSetup').addEventListener('click', async () => {
-  $('tabSetup').classList.add('on'); $('tabRun').classList.remove('on');
-  $('paneSetup').classList.add('on'); $('paneRun').classList.remove('on');
+  showTab('tabSetup');
   if (!groups.length) await loadGroups().catch((e) => log(e.message));
   else if (!$('srcGroup').options.length) await loadGroups().catch((e) => log(e.message));
 });
@@ -462,5 +559,8 @@ $('tabSetup').addEventListener('click', async () => {
   await renderSetup();
   try { const p = await callPage('ping'); log(`connected to WhatsApp (wa-js ${p.version})`); }
   catch (e) { log(e.message); }
+  await logEngine().catch((e) => log('engine: ' + e.message));
   await renderWatches();
+  const { autoLog = [] } = await chrome.storage.session.get('autoLog');
+  showAutoLog(autoLog.slice(-20));
 })();
