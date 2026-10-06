@@ -18,7 +18,7 @@ for (const f of referenced) {
 }
 
 const sources = ['background.js', 'engine.js', 'page.js', 'panel.js', 'relay.js',
-  'lib/face.js', 'lib/auto-state.js'];
+  'lib/face.js', 'lib/auto-state.js', 'lib/album-label.js'];
 for (const f of sources) {
   if (!existsSync(join(root, f))) continue;
   try { execFileSync(process.execPath, ['--check', join(root, f)], { stdio: 'pipe' }); }

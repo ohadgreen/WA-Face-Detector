@@ -33,6 +33,7 @@
       ],
       "js": [
         "vendor/wa-js.js",
+        "lib/album-label.js",
         "page.js"
       ],
       "world": "MAIN",
