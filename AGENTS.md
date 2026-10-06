@@ -69,9 +69,13 @@ only by messaging it (`catchUp`, `markSeen`, `reset`). `pending` holds message
 ids and scores, never images.
 
 For the in-chat album labels the background also writes `found` (every match,
-ids and scores, kept after Mark as seen, pruned after `FOUND_DAYS` = 30) and a
-start point `autoState[id].from` (photos before it were never checked and get
-no label). A label click is written by the background to `openAlbum` in
+ids and scores, kept after Mark as seen, pruned after `FOUND_DAYS` = 30),
+`gone` (photos skipped as expired, same shape and pruning) and a start point
+`autoState[id].from` (photos before it were never checked and get no label;
+cursors from before labels get `lastChecked + 1`). A label must never say "0"
+unless every photo it covers was actually analysed: albums older than the
+`found` window, before `from`, or with a skipped photo and no match get no
+label. A label click is written by the background to `openAlbum` in
 `chrome.storage.session`; the panel only reads it. The background pushes the
 label state for every watched group to the page with `albumState`, at most
 once a second.

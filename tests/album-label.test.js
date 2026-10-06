@@ -83,3 +83,13 @@ test('partText keeps names as plain text', () => {
   const part = { ...done('a', 1, false, []), name: '<b>Nir</b>' };
   assert.equal(partText(part, {}), '<b>Nir</b> 1'); // page.js sets it with textContent
 });
+
+test('a photo that could not be checked (expired): no confident 0', () => {
+  const w = W('a', { gone: ['m2'] });
+  assert.deepEqual(plain(labelFor([ph('m1', 150), ph('m2', 150)], chat(w))), []);
+});
+
+test('a photo that could not be checked, others matched: the matches still show', () => {
+  const w = W('a', { gone: ['m2'], found: { m1: false } });
+  assert.deepEqual(plain(labelFor([ph('m1', 150), ph('m2', 150)], chat(w))), [done('a', 1, false, ['m1'])]);
+});

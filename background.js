@@ -72,9 +72,9 @@ async function callPage(action, args) {
 /* ---------- state: autoState and pending are written only here ---------- */
 
 const load = async () => {
-  const { watches = [], autoState = {}, pending = {}, found = {} } =
-    await chrome.storage.local.get(['watches', 'autoState', 'pending', 'found']);
-  return { watches, autoState: ensureFrom(autoState), pending, found };
+  const { watches = [], autoState = {}, pending = {}, found = {}, gone = {} } =
+    await chrome.storage.local.get(['watches', 'autoState', 'pending', 'found', 'gone']);
+  return { watches, autoState: ensureFrom(autoState), pending, found, gone };
 };
 
 // Every write goes through this chain, so the loop and panel requests
@@ -83,10 +83,14 @@ const load = async () => {
 let writing = Promise.resolve();
 function mutate(fn) {
   const run = writing.then(async () => {
-    const { autoState, pending, found } = await load();
-    const out = { autoState, pending, found, ...fn({ autoState, pending, found }) };
-    out.found = pruneFound(out.found, Math.floor(Date.now() / 1000));
-    await chrome.storage.local.set({ autoState: out.autoState, pending: out.pending, found: out.found });
+    const { autoState, pending, found, gone } = await load();
+    const out = { autoState, pending, found, gone, ...fn({ autoState, pending, found, gone }) };
+    const now = Math.floor(Date.now() / 1000);
+    out.found = pruneFound(out.found, now);
+    out.gone = pruneFound(out.gone, now); // same { id, t } lists, same window
+    await chrome.storage.local.set({
+      autoState: out.autoState, pending: out.pending, found: out.found, gone: out.gone,
+    });
     await updateBadge(out.pending);
     pushLabels();
     return out;
@@ -120,8 +124,8 @@ let pushTimer = null;
 function pushLabels() {
   pushTimer ??= setTimeout(async () => {
     pushTimer = null;
-    const { watches, autoState, pending, found } = await load();
-    await callPage('albumState', albumStates(watches, autoState, pending, found, LABEL_STRINGS))
+    const { watches, ...state } = await load();
+    await callPage('albumState', albumStates(watches, state, LABEL_STRINGS, Math.floor(Date.now() / 1000)))
       .catch(() => {}); // no tab or not ready: the next 'ready' pushes again
   }, 1000);
 }
