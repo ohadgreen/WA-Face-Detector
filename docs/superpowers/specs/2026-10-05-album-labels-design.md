@@ -306,3 +306,22 @@ README: one line describing the in-chat labels.
 
 Independent. Label text comes from the background in `strings` either way;
 whichever ships second routes it through `t()`.
+
+## Findings (Task 1 of the plan, 2026-10-06)
+
+- **Row markup:** each message row is a `[data-id]` element whose value is the
+  message's *short* id (`msg.id.id`, e.g. `AC82CED4EEF42A6CCD68EBBE213A2325`),
+  not the serialised key, so `MsgStore.get(dataId)` finds nothing. Rows are
+  resolved through the open chat's messages
+  (`WPP.whatsapp.ChatStore.get(chatId).msgs.getModelsArray()`, keyed by
+  `m.id.id`). Rows are not nested.
+- **Albums:** an album row's message has `type: 'album'`. Its photos are
+  separate `image` messages (videos too, which are ignored) with
+  `associationType: 'MEDIA_ALBUM'` and `parentMsgKey` equal to the album's
+  serialised key. Their `t` can be a few seconds after the album's. A single
+  photo's row is the `image` message itself.
+- **Outgoing rows:** WhatsApp no longer has `.message-out`/`.message-in`; the
+  label's side comes from the message's `id.fromMe`.
+- **Active chat:** `WPP.chat.getActiveChat()?.id?.toString()` works.
+- **Side panel from a label click:** opens (page → relay → background →
+  `chrome.sidePanel.open({ windowId })`).
