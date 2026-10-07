@@ -1,6 +1,7 @@
 import {
   isAuto, initState, catchUpSince, targetsFor, PhotoQueue,
   recordResult, skipResult, markSeen, forget, pendingTotal, Batcher, notifyText, onFailure,
+  ensureFrom, pruneFound, albumStates,
 } from './lib/auto-state.js';
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -71,20 +72,27 @@ async function callPage(action, args) {
 /* ---------- state: autoState and pending are written only here ---------- */
 
 const load = async () => {
-  const { watches = [], autoState = {}, pending = {} } =
-    await chrome.storage.local.get(['watches', 'autoState', 'pending']);
-  return { watches, autoState, pending };
+  const { watches = [], autoState = {}, pending = {}, found = {}, gone = {} } =
+    await chrome.storage.local.get(['watches', 'autoState', 'pending', 'found', 'gone']);
+  return { watches, autoState: ensureFrom(autoState), pending, found, gone };
 };
 
 // Every write goes through this chain, so the loop and panel requests
-// (markSeen, reset) can't interleave a read-modify-write.
+// (markSeen, reset) can't interleave a read-modify-write. `fn` may return
+// only the parts it changes; the rest are carried over.
 let writing = Promise.resolve();
 function mutate(fn) {
   const run = writing.then(async () => {
-    const { autoState, pending } = await load();
-    const out = fn({ autoState, pending });
-    await chrome.storage.local.set({ autoState: out.autoState, pending: out.pending });
+    const { autoState, pending, found, gone } = await load();
+    const out = { autoState, pending, found, gone, ...fn({ autoState, pending, found, gone }) };
+    const now = Math.floor(Date.now() / 1000);
+    out.found = pruneFound(out.found, now);
+    out.gone = pruneFound(out.gone, now); // same { id, t } lists, same window
+    await chrome.storage.local.set({
+      autoState: out.autoState, pending: out.pending, found: out.found, gone: out.gone,
+    });
     await updateBadge(out.pending);
+    pushLabels();
     return out;
   });
   writing = run.catch(() => {});
@@ -101,6 +109,42 @@ async function updateBadge(pending) {
     title: modelsMissing ? 'Class Photo Filter - set up the models in the panel'
       : n ? `Class Photo Filter - ${n} match(es) waiting` : 'Class Photo Filter',
   });
+}
+
+/* ---------- in-chat album labels ---------- */
+
+// Label text lives here, not in page.js, so the page needs no language.
+const LABEL_STRINGS = { inProgress: 'in progress', reviewed: 'reviewed' };
+
+// One push carries every watched group and replaces the page's whole label
+// state, so a group whose watch was turned off loses its labels too. At most
+// once a second while a batch runs; it reads state when it fires, so the
+// last change always gets through.
+let pushTimer = null;
+function pushLabels() {
+  pushTimer ??= setTimeout(async () => {
+    pushTimer = null;
+    const { watches, ...state } = await load();
+    await callPage('albumState', albumStates(watches, state, LABEL_STRINGS, Math.floor(Date.now() / 1000)))
+      .catch(() => {}); // no tab or not ready: the next 'ready' pushes again
+  }, 1000);
+}
+
+// Auto-watch toggled or a watch removed in the panel (it owns `watches`).
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.watches) pushLabels();
+});
+
+// sidePanel.open needs the click's user gesture, so it is the first call,
+// before anything is awaited. Chrome may still refuse; the request then
+// waits in session storage until the panel is opened by hand.
+function openAlbum({ watchId, ids }, sender) {
+  const opening = sender.tab
+    ? chrome.sidePanel.open({ windowId: sender.tab.windowId })
+    : Promise.reject(new Error('the click came from no tab'));
+  opening.catch((e) => alog('side panel not opened from the chat label - ' +
+    `click the extension icon to see the album (${e.message})`));
+  chrome.storage.session.set({ openAlbum: { watchId, ids, at: Date.now() } });
 }
 
 /* ---------- the auto-watch loop ---------- */
@@ -277,8 +321,12 @@ let waTab = null;
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg?.__cpf !== 'evt') return;
   if (sender.tab) waTab = { id: sender.tab.id, windowId: sender.tab.windowId };
-  if (msg.type === 'ready') catchUp('WhatsApp ready');
+  if (msg.type === 'ready') { catchUp('WhatsApp ready'); pushLabels(); }
   else if (msg.type === 'newImage') onNewImage(msg.data);
+  else if (msg.type === 'openAlbum') openAlbum(msg.data, sender);
+  else if (msg.type === 'labelsBroken') {
+    alog("chat labels: message rows not found - WhatsApp's layout may have changed");
+  }
 });
 
 chrome.notifications.onClicked.addListener((id) => {

@@ -14,6 +14,8 @@ without a keystroke from you.
 4. Shows a badge on the extension icon and a Windows notification when there
    are matches, and lists them for review.
 5. Pastes the ones you keep into a destination chat's composer. **You press Enter.**
+6. In a watched group, labels each album with how many photos of your child it
+   contains; click a label to review just that album.
 
 Each watch is independent, so one child per group with its own threshold and
 destination.

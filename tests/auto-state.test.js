@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   isAuto, initState, catchUpSince, targetsFor, PhotoQueue,
   recordResult, skipResult, markSeen, forget, pendingTotal, Batcher, notifyText, onFailure,
+  ensureFrom, pruneFound, albumStates, FOUND_DAYS,
 } from '../lib/auto-state.js';
 
 const G = 'g1@g.us';
@@ -19,9 +20,10 @@ test('isAuto: missing flag means on, false means off', () => {
   assert.equal(isAuto(W('a', { auto: false })), false);
 });
 
-test('initState: lastSeen wins, otherwise the first-scan window', () => {
-  assert.deepEqual(initState(W('a', { lastSeen: 500 }), 10_000_000, 10), C(500));
-  assert.deepEqual(initState(W('a'), 10_000_000, 10), C(10_000_000 - 864_000));
+test('initState: lastSeen wins, otherwise the first-scan window; from is the same start point', () => {
+  assert.deepEqual(initState(W('a', { lastSeen: 500 }), 10_000_000, 10), { ...C(500), from: 500 });
+  const start = 10_000_000 - 864_000;
+  assert.deepEqual(initState(W('a'), 10_000_000, 10), { ...C(start), from: start });
 });
 
 test('catchUpSince: one second before the watch furthest behind on that group (two cursors)', () => {
@@ -141,9 +143,11 @@ test('markSeen removes only the reviewed ids', () => {
   assert.equal(pending.a.length, 3);
 });
 
-test('forget drops a watch from both maps', () => {
-  const s = forget({ autoState: { a: C(1), b: C(2) }, pending: { a: [{ id: 'm1' }] } }, 'a');
-  assert.deepEqual(s, { autoState: { b: C(2) }, pending: {} });
+test('forget drops a watch from autoState, pending and found', () => {
+  const s = forget({
+    autoState: { a: C(1), b: C(2) }, pending: { a: [{ id: 'm1' }] }, found: { a: [{ id: 'm1' }], b: [{ id: 'x' }] },
+  }, 'a');
+  assert.deepEqual(s, { autoState: { b: C(2) }, pending: {}, found: { b: [{ id: 'x' }] }, gone: {} });
 });
 
 test('pendingTotal sums every watch', () => {
@@ -190,4 +194,90 @@ test('onFailure: engine errors pause, except an image the engine cannot decode',
 test('notifyText', () => {
   assert.equal(notifyText(W('a', { name: 'carmel', srcName: 'כיתה א2' }), 1), '1 new photo of carmel in כיתה א2');
   assert.equal(notifyText(W('a', { name: 'carmel', srcName: 'כיתה א2' }), 3), '3 new photos of carmel in כיתה א2');
+});
+
+test('ensureFrom: a cursor from before album labels labels only photos after it', () => {
+  // from = lastChecked + 1: the album at exactly lastChecked was checked
+  // before found existed, so it must get no label rather than a wrong 0.
+  const out = ensureFrom({ a: C(300, ['m1']), b: { ...C(400), from: 100 } });
+  assert.deepEqual(out, { a: { ...C(300, ['m1']), from: 301 }, b: { ...C(400), from: 100 } });
+});
+
+test('recordResult: the cursor keeps its from', () => {
+  const s = recordResult({ autoState: { a: { ...C(90), from: 50 } }, pending: {} }, P('m1', 100), [hit('a', 0.1)], [W('a')]);
+  assert.deepEqual(s.autoState.a, { ...C(100, ['m1']), from: 50 });
+});
+
+test('recordResult: a match goes into found as well as pending, once', () => {
+  let s = { autoState: { a: C(90) }, pending: {}, found: {} };
+  s = recordResult(s, P('m1', 100), [hit('a', 0.5, 70)], [W('a')]);
+  assert.deepEqual(s.found, { a: [{ id: 'm1', t: 100, score: 0.5, px: 70 }] });
+  s = recordResult(s, P('m1', 100), [hit('a', 0.5, 70)], [W('a')]);
+  assert.equal(s.found.a.length, 1);
+});
+
+test('recordResult: state written before album labels (no found) still works', () => {
+  const s = recordResult({ autoState: { a: C(90) }, pending: {} }, P('m1', 100), [hit('a', 0.5, 70)], [W('a')]);
+  assert.deepEqual(s.found.a.map((x) => x.id), ['m1']);
+});
+
+test('pruneFound drops matches older than FOUND_DAYS and empty watches', () => {
+  const now = 10_000_000, old = now - FOUND_DAYS * 86400 - 1, edge = now - FOUND_DAYS * 86400;
+  const out = pruneFound({ a: [{ id: 'm1', t: old }, { id: 'm2', t: edge }], b: [{ id: 'x', t: old }] }, now);
+  assert.deepEqual(out, { a: [{ id: 'm2', t: edge }] });
+});
+
+// albumStates(watches, { autoState, pending, found, gone }, strings, nowSec)
+const NOW = 1_000; // early enough that the found window never clamps
+
+test('albumStates: per group, cursor plus found flagged reviewed when no longer waiting', () => {
+  const ws = [W('a', { refs: [[1, 2]] }), W('b', { src: 'g2@g.us' })];
+  const autoState = { a: { ...C(200, ['m3']), from: 100 }, b: { ...C(50), from: 10 } };
+  const pending = { a: [{ id: 'm2' }] };
+  const found = { a: [{ id: 'm1', t: 120 }, { id: 'm2', t: 150 }] };
+  const gone = { a: [{ id: 'm4', t: 130 }] };
+  const out = albumStates(ws, { autoState, pending, found, gone }, { inProgress: 'in progress' }, NOW);
+  assert.deepEqual(out, {
+    strings: { inProgress: 'in progress' },
+    chats: [
+      { chatId: G, watches: [{ id: 'a', name: 'kid-a', from: 100, lastChecked: 200, atChecked: ['m3'],
+        found: { m1: true, m2: false }, gone: ['m4'] }] },
+      { chatId: 'g2@g.us', watches: [{ id: 'b', name: 'kid-b', from: 10, lastChecked: 50, atChecked: [],
+        found: {}, gone: [] }] },
+    ],
+  });
+  assert.ok(!JSON.stringify(out).includes('refs'));
+});
+
+test('albumStates: skips manual watches and watches with no cursor yet', () => {
+  const ws = [W('a', { auto: false }), W('b'), W('c')];
+  const out = albumStates(ws, { autoState: { a: C(1), c: C(5) }, pending: {}, found: {} }, {}, NOW);
+  assert.deepEqual(out.chats.map((c) => c.watches.map((w) => w.id)), [['c']]);
+  assert.equal(out.chats[0].watches[0].from, 6); // no from yet: same as ensureFrom
+});
+
+test('albumStates: two watches on one group share one entry', () => {
+  const out = albumStates([W('a'), W('b')], { autoState: { a: C(1), b: C(2) }, pending: {}, found: {} }, {}, NOW);
+  assert.equal(out.chats.length, 1);
+  assert.deepEqual(out.chats[0].watches.map((w) => w.id), ['a', 'b']);
+});
+
+test('albumStates: from never reaches back past the found window', () => {
+  // Matches older than FOUND_DAYS are pruned, so an older album would read 0.
+  const now = 100 + FOUND_DAYS * 86400 + 50;
+  const out = albumStates([W('a')], { autoState: { a: { ...C(now - 10), from: 100 } }, pending: {}, found: {} }, {}, now);
+  assert.equal(out.chats[0].watches[0].from, now - FOUND_DAYS * 86400);
+});
+
+test('skipResult records the photo as gone for each target, once', () => {
+  let s = { autoState: { a: C(90), b: C(90) }, pending: {}, found: {}, gone: {} };
+  s = skipResult(s, P('m1', 100), [W('a'), W('b')]);
+  assert.deepEqual(s.gone, { a: [{ id: 'm1', t: 100 }], b: [{ id: 'm1', t: 100 }] });
+  s = skipResult(s, P('m1', 100), [W('a')]);
+  assert.equal(s.gone.a.length, 1);
+});
+
+test('forget clears gone too', () => {
+  const s = forget({ autoState: { a: C(1) }, pending: {}, found: {}, gone: { a: [{ id: 'm1', t: 1 }] } }, 'a');
+  assert.deepEqual(s.gone, {});
 });

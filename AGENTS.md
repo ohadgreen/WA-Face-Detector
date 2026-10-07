@@ -35,10 +35,12 @@ relay.js                 ISOLATED content-script world
         |  window.postMessage  <->  { __cpf:'req'|'res'|'evt', ... }
 page.js                  MAIN content-script world
                          the ONLY file that may touch wa-js or WhatsApp internals
+                         also draws the in-chat album labels (only its own
+                         data-cpf-label hosts), with rules from lib/album-label.js
 ```
 
 Message tags: `call`/`req`/`res` are extension → page requests; `evt` is
-page → background events (`ready`, `newImage`); `engine` is a request to the
+page → background events (`ready`, `newImage`, `openAlbum`, `labelsBroken`); `engine` is a request to the
 engine; `bg` is a panel → background request. Every `chrome.runtime.sendMessage`
 reaches every extension context, so each listener ignores tags that aren't its own.
 
@@ -65,6 +67,18 @@ memory stays flat regardless of batch size. Do not batch-transfer whole albums.
 `autoState` and `pending` → background. The panel changes background state
 only by messaging it (`catchUp`, `markSeen`, `reset`). `pending` holds message
 ids and scores, never images.
+
+For the in-chat album labels the background also writes `found` (every match,
+ids and scores, kept after Mark as seen, pruned after `FOUND_DAYS` = 30),
+`gone` (photos skipped as expired, same shape and pruning) and a start point
+`autoState[id].from` (photos before it were never checked and get no label;
+cursors from before labels get `lastChecked + 1`). A label must never say "0"
+unless every photo it covers was actually analysed: albums older than the
+`found` window, before `from`, or with a skipped photo and no match get no
+label. A label click is written by the background to `openAlbum` in
+`chrome.storage.session`; the panel only reads it. The background pushes the
+label state for every watched group to the page with `albumState`, at most
+once a second.
 
 Each watch's cursor is `lastChecked` + `atChecked` (ids done at exactly that
 second), because album photos share a timestamp. The rules are in
@@ -93,7 +107,8 @@ owner explicitly asking.
 5. **Work is only offered when there is work.** A watch with no new messages since
    `lastSeen` shows a disabled button. `lastSeen` only advances when the user
    clicks "Mark as seen", or when "Add to composer" succeeds (which marks the
-   whole review as seen), so an interrupted scan costs nothing.
+   whole review as seen), so an interrupted scan costs nothing. An album
+   review (opened from an in-chat label) never changes `lastSeen`.
 6. **Never commit `vendor/` or `node_modules/`.** Regenerate with `npm run vendor`.
 
 ## The non-obvious technical constraints
@@ -153,7 +168,27 @@ Each of these cost a debugging session. Do not "simplify" them away.
   considered and deferred by the owner.
 - **Any extension reload disconnects the relay in open WhatsApp tabs.** Calls
   to the page then fail with `Receiving end does not exist` until the tab is
-  refreshed — not only after `page.js`/`relay.js` changes.
+  refreshed — not only after `page.js`/`relay.js` changes. Album labels
+  already drawn stay frozen and clicks do nothing until then.
+- **Never locate WhatsApp elements by visible text or accessibility labels.**
+  They change with WhatsApp's language.
+- **All knowledge of WhatsApp's message markup is in `chatIndex` (page.js,
+  maps the chat's messages to plain records) and `rowPhotos`
+  (lib/album-label.js, decodes a row's `data-id`, unit-tested).** If labels go
+  missing after a WhatsApp update, fix there; the panel log says
+  `chat labels: message rows not found`. As of 2026-10 a row's `data-id` is
+  one of: a message's *short* id (`msg.id.id`; `MsgStore.get(dataId)` finds
+  nothing, so rows resolve through `ChatStore.get(chatId).msgs`); an `album`
+  message's short id, whose photos are separate `image` messages with
+  `parentMsgKey` = the album's key; or `album-<first>-<last>-<n>`, WhatsApp
+  grouping photos sent one by one (no album message — they first appear as
+  single photos, then merge), named by the first and last photo's short ids.
+  Rows have no `.message-out`/`.message-in`; the side comes from
+  `msg.id.fromMe`. `chrome.sidePanel.open` works from a label click relayed
+  page → relay → background.
+- **`lib/album-label.js` is a classic script**, loaded before `page.js`,
+  because `page.js` can't import modules. It duplicates `notYetChecked` from
+  `lib/auto-state.js` — change both. Its tests load it with `node:vm`.
 
 ## lib/face.js
 
@@ -185,7 +220,7 @@ to tune around, and not a bug to "fix".
 
 ## Verifying a change
 
-`npm test` runs the unit tests for `lib/auto-state.js` (Node's built-in
+`npm test` runs the unit tests for `lib/auto-state.js` and `lib/album-label.js` (Node's built-in
 runner, no dependencies). Everything that touches Chrome or WhatsApp is
 checked by hand. Before claiming something works:
 

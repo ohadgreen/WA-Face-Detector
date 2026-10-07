@@ -450,13 +450,18 @@ async function scan(w) {
 }
 
 // Waiting matches hold ids and scores only (photos are never stored), so
-// each one is downloaded again here and thumbnailed in memory.
-async function review(w) {
-  const { pending = {}, autoState = {} } = await chrome.storage.local.get(['pending', 'autoState']);
-  const list = [...(pending[w.id] || [])].sort((a, b) => b.score - a.score);
+// each one is downloaded again here and thumbnailed in memory. With `ids`
+// (a click on an in-chat album label) it shows that album's matches from
+// `found` instead, reviewed or not.
+async function review(w, ids = null) {
+  const { pending = {}, autoState = {}, found = {} } =
+    await chrome.storage.local.get(['pending', 'autoState', 'found']);
+  const source = ids ? (found[w.id] || []).filter((p) => ids.includes(p.id)) : (pending[w.id] || []);
+  const list = [...source].sort((a, b) => b.score - a.score);
   // Read now, so matches that arrive during the review aren't covered by it.
   const upTo = autoState[w.id]?.lastChecked || 0;
-  log(`\n${w.name}: loading ${list.length} waiting match(es)...`);
+  const waiting = new Set((pending[w.id] || []).map((p) => p.id));
+  log(`\n${w.name}: loading ${list.length} ${ids ? 'album' : 'waiting'} match(es)...`);
   const rows = [];
   for (const p of list) {
     try {
@@ -467,14 +472,18 @@ async function review(w) {
         gone: /media not found/i.test(e.message) ? 'no longer available' : e.message });
     }
   }
-  current = { watch: w, rows, auto: true, upTo, skipped: 0 };
+  current = {
+    watch: w, rows, auto: true, upTo, skipped: 0,
+    album: !!ids, reviewed: !!ids && !list.some((p) => waiting.has(p.id)),
+  };
   renderReview();
 }
 
 function renderReview() {
   const { watch, rows, skipped } = current;
   $('reviewCard').hidden = false;
-  $('reviewTitle').textContent = `${rows.length} photo(s) of ${watch.name}`;
+  $('reviewTitle').textContent = `${rows.length} photo(s) of ${watch.name}` +
+    (current.album ? ' in this album' : '');
   $('reviewHint').textContent = (rows.length
     ? `Untick anything wrong, then add them to ${watch.dstName}. You press Enter to send.`
     : 'Nothing matched. "Mark as seen" to skip these next time.')
@@ -488,6 +497,8 @@ function renderReview() {
     <div class="thumb gone"><div class="ph">${esc(r.gone)}</div>
       <span class="s">${r.score.toFixed(3)} <span class="muted">${r.px}px</span></span></div>`).join('');
   $('sendBtn').disabled = !rows.some((r) => r.thumb);
+  $('doneBtn').disabled = !!current.reviewed;
+  $('doneBtn').title = current.reviewed ? 'already reviewed' : '';
 }
 
 $('sendBtn').addEventListener('click', async () => {
@@ -508,8 +519,12 @@ async function markSeen() {
   const watches = await getWatches();
   const w = watches.find((x) => x.id === current.watch.id);
   if (!w) throw new Error('that watch was removed');
-  w.lastSeen = current.auto ? Math.max(w.lastSeen || 0, current.upTo) : current.newest;
-  await setWatches(watches);
+  // One album is not the whole watch: an album review clears its own photos
+  // from waiting but leaves lastSeen where it was.
+  if (!current.album) {
+    w.lastSeen = current.auto ? Math.max(w.lastSeen || 0, current.upTo) : current.newest;
+    await setWatches(watches);
+  }
   // Only the rows shown here: matches that arrived during the review stay waiting.
   if (current.auto) await bg('markSeen', { watchId: w.id, ids: current.rows.map((r) => r.id) });
   $('reviewCard').hidden = true;
@@ -519,6 +534,21 @@ async function markSeen() {
 }
 
 $('doneBtn').addEventListener('click', () => markSeen().catch((e) => log('ERROR: ' + e.message)));
+
+/* ---------- album label clicks ---------- */
+
+// The background writes the request (one writer per key); the panel only
+// reads it and remembers the last one handled, so the start-up check and
+// onChanged can't open the same album twice.
+let albumHandled = 0;
+async function openAlbum(req) {
+  if (!req || req.at <= albumHandled) return;
+  albumHandled = req.at;
+  showTab('tabRun');
+  const w = (await getWatches()).find((x) => x.id === req.watchId);
+  if (!w) { log('that watch was removed'); return; }
+  await review(w, req.ids);
+}
 
 /* ---------- background activity ---------- */
 
@@ -531,6 +561,9 @@ function showAutoLog(entries = []) {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'session' && changes.autoLog) showAutoLog(changes.autoLog.newValue);
+  if (area === 'session' && changes.openAlbum) {
+    openAlbum(changes.openAlbum.newValue).catch((e) => log('ERROR: ' + e.message));
+  }
   if (area === 'local' && changes.pending) {
     renderWatches().catch((e) => log(e.message));
     renderSetup().catch((e) => log(e.message));
@@ -561,6 +594,9 @@ $('tabSetup').addEventListener('click', async () => {
   catch (e) { log(e.message); }
   await logEngine().catch((e) => log('engine: ' + e.message));
   await renderWatches();
-  const { autoLog = [] } = await chrome.storage.session.get('autoLog');
+  const { autoLog = [], openAlbum: req } = await chrome.storage.session.get(['autoLog', 'openAlbum']);
   showAutoLog(autoLog.slice(-20));
+  // A label clicked just before the panel opened (or when Chrome refused to
+  // open it): honour it if recent, ignore a stale one.
+  if (req && Date.now() - req.at < 120_000) await openAlbum(req).catch((e) => log('ERROR: ' + e.message));
 })();
