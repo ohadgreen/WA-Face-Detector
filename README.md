@@ -23,8 +23,16 @@ destination.
 ## Setup
 
 ```bash
-npm install          # also vendors the runtime files into vendor/
+npm install          # also vendors the runtime files and the models
 ```
+
+`npm install` fills `vendor/` and `models/`. The two face models
+(`det_10g.onnx`, `w600k_r50.onnx`) are copied from `~/.insightface/models/buffalo_l/`
+if InsightFace has run on this machine, otherwise taken from the `buffalo_l`
+release zip (~290MB download), and checked against pinned SHA-256 hashes.
+`npm run models` repeats just that step. The models are InsightFace's and are
+licensed for non-commercial research use only; check before redistributing a
+packaged build.
 
 Then in Chrome: `chrome://extensions` → Developer mode → **Load unpacked** → pick
 this folder.
@@ -32,14 +40,10 @@ this folder.
 Open WhatsApp Web, click the extension icon to open the side panel, and go to
 **Setup**:
 
-1. **Models** — pick `det_10g.onnx` and `w600k_r50.onnx` once. They're cached in
-   IndexedDB and never asked for again. Get them by running InsightFace once in
-   Python, or download the `buffalo_l` pack from the InsightFace model zoo. They
-   land in `~/.insightface/models/buffalo_l/`.
-2. **Add a watch** — source group, destination, child's name, a few reference
+1. **Add a watch** — source group, destination, child's name, a few reference
    photos, and a threshold. Leave **Auto-watch** ticked to have new photos
    checked in the background.
-3. **Keep WhatsApp Web active** — in `chrome://settings/performance`, add
+2. **Keep WhatsApp Web active** — in `chrome://settings/performance`, add
    `web.whatsapp.com` to *Always keep these sites active*. Otherwise Chrome's
    Memory Saver may unload the tab and background watching stops until you
    return to it. Background watching only works while a WhatsApp Web tab is
@@ -89,7 +93,7 @@ Background activity also shows in the panel log, prefixed `[auto]`.
 ## Architecture
 
 ```
-panel.js       extension origin. UI, model storage (IndexedDB), thumbnails.
+panel.js       extension origin. UI, thumbnails.
 engine.js      offscreen document. ORT sessions and face matching.
 background.js  service worker. Auto-watch loop, badge, notifications.
    |  chrome.tabs.sendMessage / chrome.runtime.sendMessage
@@ -98,10 +102,10 @@ relay.js       ISOLATED world. A dumb pipe in both directions.
 page.js        MAIN world. The only file that touches wa-js / WhatsApp internals.
 ```
 
-Recognition lives in an offscreen extension page: content scripts inherit the
-*page's* IndexedDB origin, which would mean re-picking 174MB of models on every
-WhatsApp reload, and the side panel isn't running when it's closed. The engine
-keeps the models loaded while Chrome runs. Images cross each boundary as data
+Recognition lives in an offscreen extension page: a content script would load
+ONNX Runtime and 190MB of models into WhatsApp's own tab on every reload, and
+the side panel isn't running when it's closed. The engine loads the models from
+the extension's `models/` folder and keeps them loaded while Chrome runs. Images cross each boundary as data
 URLs, one at a time, which keeps memory flat regardless of batch size.
 
 `lib/face.js` is a plain-JS port of InsightFace's SCRFD detection, 5-point
@@ -139,6 +143,8 @@ lib/face.js        SCRFD + ArcFace in plain JS
 lib/auto-state.js  auto-watch queue and cursor rules (pure, unit-tested)
 tests/             node --test unit tests
 scripts/vendor.mjs copies runtime files from node_modules into vendor/
+scripts/models.mjs fetches and verifies the two InsightFace models into models/
 scripts/check.mjs  syntax + manifest path check
 vendor/            gitignored; regenerate with `npm run vendor`
+models/            gitignored; regenerate with `npm run models`
 ```

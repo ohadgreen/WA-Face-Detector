@@ -1,8 +1,7 @@
 /* Offscreen document: the only place ONNX Runtime runs. The panel and the
    background both send it work over chrome.runtime. Offscreen documents get
-   no chrome API except runtime, so it has no storage, tabs or UI. It reads
-   the models from IndexedDB, which is on the same extension origin as the
-   panel that stores them. */
+   no chrome API except runtime, so it has no storage, tabs or UI. The models
+   ship inside the extension, in models/ (filled by `npm run models`). */
 import { analyse, cosine, embed } from './lib/face.js';
 
 ort.env.wasm.wasmPaths = chrome.runtime.getURL('vendor/');
@@ -11,20 +10,14 @@ ort.env.logLevel = 'error';
 // and the threaded build would abort. Pin to one thread.
 ort.env.wasm.numThreads = 1;
 
-/* ---------- model storage (read-only here; the panel writes it) ---------- */
+/* ---------- models (packaged with the extension) ---------- */
 
-const idb = () => new Promise((res, rej) => {
-  const r = indexedDB.open('cpf-models', 1);
-  r.onupgradeneeded = () => r.result.createObjectStore('m');
-  r.onsuccess = () => res(r.result);
-  r.onerror = () => rej(r.error);
-});
-const idbGet = async (k) => {
-  const db = await idb();
-  return new Promise((res, rej) => {
-    const q = db.transaction('m').objectStore('m').get(k);
-    q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
-  });
+// A file missing from the package makes fetch reject, not return a 404.
+const loadModel = async (name) => {
+  try {
+    const res = await fetch(chrome.runtime.getURL('models/' + name));
+    return res.ok ? await res.arrayBuffer() : null;
+  } catch { return null; }
 };
 
 /* ---------- images ---------- */
@@ -75,8 +68,8 @@ async function timeRecogniser() {
 
 async function ensureModels() {
   if (detSession && recSession) return true;
-  const d = await idbGet('det'), r = await idbGet('rec');
-  if (!d || !r) return false;
+  const d = await loadModel('det_10g.onnx'), r = await loadModel('w600k_r50.onnx');
+  if (!d || !r) { console.error('[engine] models/ is missing a model - run npm run models'); return false; }
   // SCRFD uses an AveragePool variant WebGPU doesn't implement, so detector stays on WASM.
   const det = await makeSession(d, 'detector', ['wasm']);
   const rec = await makeSession(r, 'recogniser', ['webgpu', 'wasm']);
@@ -87,7 +80,7 @@ async function ensureModels() {
 }
 
 async function needModels() {
-  if (!(await ensureModels())) throw new Error('no models - set them up in the panel');
+  if (!(await ensureModels())) throw new Error('no models - run npm run models, then reload the extension');
 }
 
 /* ---------- requests ---------- */
@@ -96,12 +89,6 @@ const ops = {
   async status() {
     const models = await ensureModels();
     return { models, gpu: 'gpu' in navigator, ...(info || {}) };
-  },
-  // The panel stored new model files: drop the sessions so the next call reloads.
-  async reload() {
-    await detSession?.release?.(); await recSession?.release?.();
-    detSession = recSession = info = null;
-    return true;
   },
   // Reference photos at setup: the largest face in each, any size.
   async embed({ dataUrls }) {

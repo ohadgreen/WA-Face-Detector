@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "vendor": "node scripts/vendor.mjs",
-    "postinstall": "node scripts/vendor.mjs",
+    "models": "node scripts/models.mjs",
+    "postinstall": "node scripts/vendor.mjs && node scripts/models.mjs",
     "check": "node scripts/check.mjs",
     "test": "node --test \"tests/**/*.test.js\""
   },

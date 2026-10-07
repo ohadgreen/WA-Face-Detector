@@ -1,5 +1,6 @@
 node_modules/
 vendor/
+models/
 .chrome-profile/
 *.zip
 .DS_Store

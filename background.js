@@ -12,6 +12,10 @@ chrome.commands.onCommand.addListener((cmd) => {
   if (cmd === 'reload-extension') chrome.runtime.reload();
 });
 
+// Up to 0.12 the user uploaded the models and the panel kept them in this
+// database. They ship in models/ now, so free the ~190MB the old copy holds.
+chrome.runtime.onInstalled.addListener(() => { indexedDB.deleteDatabase('cpf-models'); });
+
 // Duplicated in panel.js - change both. A watch never marked as seen starts
 // this far back, because WhatsApp's links for older media have expired.
 const FIRST_SCAN_DAYS = 10;
@@ -106,7 +110,7 @@ async function updateBadge(pending) {
   await chrome.action.setBadgeBackgroundColor({ color: modelsMissing ? '#b3261e' : '#1a7f4b' });
   await chrome.action.setBadgeText({ text: modelsMissing ? '!' : n ? String(n) : '' });
   await chrome.action.setTitle({
-    title: modelsMissing ? 'Class Photo Filter - set up the models in the panel'
+    title: modelsMissing ? 'Class Photo Filter - models missing, run npm run models'
       : n ? `Class Photo Filter - ${n} match(es) waiting` : 'Class Photo Filter',
   });
 }
