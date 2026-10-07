@@ -93,3 +93,54 @@ test('a photo that could not be checked, others matched: the matches still show'
   const w = W('a', { gone: ['m2'], found: { m1: false } });
   assert.deepEqual(plain(labelFor([ph('m1', 150), ph('m2', 150)], chat(w))), [done('a', 1, false, ['m1'])]);
 });
+
+// Which photos a row shows. Records are the open chat's messages in order,
+// as page.js maps them: { short, key, type, t, fromMe, parent }.
+const { indexMessages, rowPhotos } = ctx.CpfAlbumLabel;
+const rec = (short, type, t, over = {}) => ({
+  short, key: `false_g1@g.us_${short}_p@lid`, type, t, fromMe: false, parent: null, ...over,
+});
+const keysOf = (r) => plain(r.photos).map((p) => p.id);
+
+test('rowPhotos: a single photo row is that photo', () => {
+  const idx = indexMessages([rec('T1', 'chat', 90), rec('P1', 'image', 100)]);
+  const r = rowPhotos('P1', idx);
+  assert.equal(r.msg.short, 'P1');
+  assert.deepEqual(plain(r.photos), [{ id: 'false_g1@g.us_P1_p@lid', t: 100 }]);
+});
+
+test("rowPhotos: an 'album' message row is the images that point back to it", () => {
+  const album = rec('AL', 'album', 100);
+  const idx = indexMessages([
+    album,
+    rec('A1', 'image', 101, { parent: album.key }),
+    rec('V1', 'video', 101, { parent: album.key }),
+    rec('A2', 'image', 102, { parent: album.key }),
+    rec('X1', 'image', 103),
+  ]);
+  assert.deepEqual(keysOf(rowPhotos('AL', idx)), [`false_g1@g.us_A1_p@lid`, `false_g1@g.us_A2_p@lid`]);
+});
+
+test("rowPhotos: WhatsApp's own grouping 'album-<first>-<last>-<n>' is the images from first to last", () => {
+  const idx = indexMessages([
+    rec('T1', 'chat', 90),
+    rec('3EB0A', 'image', 100), rec('3EB0B', 'image', 100), rec('3EB0C', 'video', 101), rec('3EB0D', 'image', 101),
+    rec('3EB0E', 'image', 102),
+  ]);
+  const r = rowPhotos('album-3EB0A-3EB0D-4', idx);
+  assert.equal(r.msg.short, '3EB0A');
+  assert.deepEqual(keysOf(r), ['3EB0A', '3EB0B', '3EB0D'].map((s) => `false_g1@g.us_${s}_p@lid`));
+});
+
+test("rowPhotos: WhatsApp's own grouping whose last photo isn't loaded shows nothing rather than a part", () => {
+  const idx = indexMessages([rec('3EB0A', 'image', 100), rec('3EB0B', 'image', 100)]);
+  const r = rowPhotos('album-3EB0A-3EB0Z-3', idx);
+  assert.equal(r.msg.short, '3EB0A');
+  assert.deepEqual(plain(r.photos), []);
+});
+
+test('rowPhotos: an unknown row or a text message has no photos', () => {
+  const idx = indexMessages([rec('T1', 'chat', 90)]);
+  assert.deepEqual(plain(rowPhotos('nope', idx)), { msg: null, photos: [] });
+  assert.deepEqual(plain(rowPhotos('T1', idx).photos), []);
+});

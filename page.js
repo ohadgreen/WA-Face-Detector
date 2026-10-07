@@ -149,37 +149,18 @@
 
   const labels = { strings: {}, chats: new Map() };
 
-  /* The ONLY code that knows WhatsApp's message markup. When labels stop
-     appearing after a WhatsApp update, fix this (see AGENTS.md).
-     A row is a [data-id] element whose value is the message's SHORT id
-     (msg.id.id), so rows are resolved through the open chat's messages, not
-     MsgStore.get. An album row is a message of type 'album'; its photos are
-     separate image messages whose parentMsgKey is the album's key. Built
-     once per drawing pass. */
+  /* The open chat's messages, in order, as the plain records
+     lib/album-label.js works on. Rows carry the message's SHORT id
+     (msg.id.id), so they resolve through the chat's messages, not
+     MsgStore.get; the row shapes themselves are decoded by
+     CpfAlbumLabel.rowPhotos (see AGENTS.md). Built once per drawing pass. */
   function chatIndex(chatId) {
     let msgs = [];
     try { msgs = WPP.whatsapp.ChatStore.get(chatId).msgs.getModelsArray(); } catch { /* nothing loaded */ }
-    const byShort = new Map(), children = new Map();
-    for (const m of msgs) {
-      byShort.set(m.id.id, m);
-      if (m.type !== 'image' || !m.parentMsgKey) continue;
-      const parent = String(m.parentMsgKey);
-      if (!children.has(parent)) children.set(parent, []);
-      children.get(parent).push(m);
-    }
-    return { byShort, children };
-  }
-
-  /** The row's message (null if unknown) and the photos it shows, as
-      [{ id, t }] with the serialised ids the background uses. Videos in an
-      album are not scanned, so they are not counted. */
-  function photosInRow(row, index) {
-    const m = index.byShort.get(row.dataset.id);
-    if (!m) return { msg: null, photos: [] };
-    const photo = (x) => ({ id: x.id.toString(), t: x.t });
-    if (m.type === 'image') return { msg: m, photos: [photo(m)] };
-    if (m.type === 'album') return { msg: m, photos: (index.children.get(m.id.toString()) || []).map(photo) };
-    return { msg: m, photos: [] };
+    return CpfAlbumLabel.indexMessages(msgs.map((m) => ({
+      short: m.id.id, key: m.id.toString(), type: m.type, t: m.t,
+      fromMe: !!m.id.fromMe, parent: m.parentMsgKey ? String(m.parentMsgKey) : null,
+    })));
   }
 
   const activeChatId = () => {
@@ -253,9 +234,9 @@
     let resolved = 0;
     for (const row of main.querySelectorAll('[data-id]')) {
       if (row.parentElement?.closest('[data-id]')) continue; // part of another row
-      const { msg, photos } = photosInRow(row, index);
+      const { msg, photos } = CpfAlbumLabel.rowPhotos(row.dataset.id, index);
       if (msg) resolved++;
-      drawLabel(row, chatId, CpfAlbumLabel.labelFor(photos, chat), !!msg?.id?.fromMe);
+      drawLabel(row, chatId, CpfAlbumLabel.labelFor(photos, chat), !!msg?.fromMe);
     }
     watchBreakage(resolved);
   }

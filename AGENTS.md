@@ -172,13 +172,17 @@ Each of these cost a debugging session. Do not "simplify" them away.
   already drawn stay frozen and clicks do nothing until then.
 - **Never locate WhatsApp elements by visible text or accessibility labels.**
   They change with WhatsApp's language.
-- **All knowledge of WhatsApp's message markup is in `chatIndex` and
-  `photosInRow` (page.js).** If labels go missing after a WhatsApp update, fix
-  there; the panel log says `chat labels: message rows not found`. As of
-  2026-10: a row's `data-id` is the message's *short* id (`msg.id.id`), so
-  `MsgStore.get(dataId)` finds nothing — rows resolve through
-  `ChatStore.get(chatId).msgs`. An album row is a message of type `album`; its
-  photos are separate `image` messages whose `parentMsgKey` is the album's key.
+- **All knowledge of WhatsApp's message markup is in `chatIndex` (page.js,
+  maps the chat's messages to plain records) and `rowPhotos`
+  (lib/album-label.js, decodes a row's `data-id`, unit-tested).** If labels go
+  missing after a WhatsApp update, fix there; the panel log says
+  `chat labels: message rows not found`. As of 2026-10 a row's `data-id` is
+  one of: a message's *short* id (`msg.id.id`; `MsgStore.get(dataId)` finds
+  nothing, so rows resolve through `ChatStore.get(chatId).msgs`); an `album`
+  message's short id, whose photos are separate `image` messages with
+  `parentMsgKey` = the album's key; or `album-<first>-<last>-<n>`, WhatsApp
+  grouping photos sent one by one (no album message — they first appear as
+  single photos, then merge), named by the first and last photo's short ids.
   Rows have no `.message-out`/`.message-in`; the side comes from
   `msg.id.fromMe`. `chrome.sidePanel.open` works from a label click relayed
   page → relay → background.

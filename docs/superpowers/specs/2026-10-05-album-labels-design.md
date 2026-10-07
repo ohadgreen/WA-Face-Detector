@@ -325,3 +325,8 @@ whichever ships second routes it through `t()`.
 - **Active chat:** `WPP.chat.getActiveChat()?.id?.toString()` works.
 - **Side panel from a label click:** opens (page → relay → background →
   `chrome.sidePanel.open({ windowId })`).
+- **WhatsApp's own grouping (found 2026-10-07):** photos sent one by one
+  without an album message (typically from WhatsApp Web/Desktop, ids `3EB0…`)
+  first show as single photos, then WhatsApp merges them into one bubble whose
+  `data-id` is `album-<first short id>-<last short id>-<count>`. No message
+  has that id; its photos are the images between first and last in the chat.
