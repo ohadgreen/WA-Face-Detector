@@ -20,10 +20,11 @@ Five contexts. Getting these confused is the most common source of bugs.
 
 ```
 panel.js / panel.html    extension origin (chrome-extension://)
-                         owns: all UI, model *storage* (IndexedDB), thumbnails
+                         owns: all UI, thumbnails
                          calls the engine for embedding and manual scans
 engine.js / engine.html  offscreen document, extension origin
-                         owns: ORT sessions, lib/face.js, image decoding
+                         owns: ORT sessions, lib/face.js, image decoding,
+                         loading the packaged models from models/
                          only chrome.runtime is available here - no storage, no tabs
 background.js            service worker (ES module)
                          owns: the engine's lifecycle, the auto-watch loop,
@@ -50,12 +51,19 @@ needs no change — it forwards anything.
 
 ### Why recognition lives in the engine page
 
-Content scripts inherit the **page's** IndexedDB origin (`web.whatsapp.com`), so
-models cached there would be re-requested constantly. Extension pages share one
-clean origin, which is why both the panel (which stores the models) and the
-engine (which loads them) can use the same `cpf-models` database. The engine is
-an offscreen document so recognition keeps running when the side panel is
-closed. Do not move inference into a content script, and do not load ORT in
+A content script would load ORT and 190MB of models into WhatsApp's own tab on
+every reload. The engine is an extension page, so it fetches the models straight
+from the package (`models/`, not in `web_accessible_resources` — the page has no
+reason to see them). It is an offscreen document so recognition keeps running
+when the side panel is closed.
+
+The models ship in the package; there is no upload step. `npm run models`
+(also run by `npm install`) fills `models/` from `~/.insightface/models/buffalo_l/`
+or the `buffalo_l` release zip, and refuses any file whose SHA-256 doesn't match
+the hash pinned in `scripts/models.mjs`. Up to 0.12 the panel stored uploaded
+models in an IndexedDB database, `cpf-models`; the background deletes it on
+install/update. InsightFace licenses the models for non-commercial research only,
+so do not publish a packaged build without the owner clearing that. Do not move inference into a content script, and do not load ORT in
 the panel again — two copies means double the memory.
 
 Images cross each boundary as data URLs, **one at a time**. This is deliberate:
@@ -109,7 +117,9 @@ owner explicitly asking.
    clicks "Mark as seen", or when "Add to composer" succeeds (which marks the
    whole review as seen), so an interrupted scan costs nothing. An album
    review (opened from an in-chat label) never changes `lastSeen`.
-6. **Never commit `vendor/` or `node_modules/`.** Regenerate with `npm run vendor`.
+6. **Never commit `vendor/`, `models/` or `node_modules/`.** Regenerate with
+   `npm run vendor` and `npm run models`. `w600k_r50.onnx` alone is over GitHub's
+   100MB file limit.
 
 ## The non-obvious technical constraints
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Class Photo Filter",
-  "version": "0.12",
+  "version": "0.13",
   "description": "Finds photos of your child in WhatsApp group albums and queues them for the family chat.",
   "permissions": [
     "storage",
