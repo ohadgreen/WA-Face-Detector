@@ -26,13 +26,8 @@ destination.
 npm install          # also vendors the runtime files and the models
 ```
 
-`npm install` fills `vendor/` and `models/`. The two face models
-(`det_10g.onnx`, `w600k_r50.onnx`) are copied from `~/.insightface/models/buffalo_l/`
-if InsightFace has run on this machine, otherwise taken from the `buffalo_l`
-release zip (~290MB download), and checked against pinned SHA-256 hashes.
-`npm run models` repeats just that step. The models are InsightFace's and are
-licensed for non-commercial research use only; check before redistributing a
-packaged build.
+`npm install` fills `vendor/` (ONNX Runtime, wa-js) and `models/` (the two face
+models, see [Models](#models)). There is nothing to upload in the panel.
 
 Then in Chrome: `chrome://extensions` → Developer mode → **Load unpacked** → pick
 this folder.
@@ -58,6 +53,41 @@ children: a child usually photographed close to the camera separates cleanly
 around 0.40, while one usually further away may need 0.23. Pick a value in the
 gap between the lowest true match and the highest false one.
 
+## Models
+
+The extension ships with two models from InsightFace's `buffalo_l` pack
+(release v0.7). They're loaded by the engine straight from the extension's
+`models/` folder, and everything runs on your machine.
+
+| File | What it does | Size | Runs on |
+|---|---|---|---|
+| `det_10g.onnx` | SCRFD-10GF face detector: a box and 5 landmarks per face | 17MB | WASM |
+| `w600k_r50.onnx` | ArcFace ResNet-50 recogniser (trained on WebFace600K): a 512-float embedding per aligned 112×112 face | 174MB | WebGPU, falling back to WASM |
+
+The other three files in `buffalo_l` (3D/2D landmarks, gender/age) aren't used.
+
+**How they get there.** `npm run models` (also run by `npm install`):
+
+1. copies them from `~/.insightface/models/buffalo_l/` if InsightFace has run on
+   this machine, otherwise
+2. downloads the `buffalo_l` release zip (~290MB) and extracts just these two,
+3. checks each file against the SHA-256 pinned in `scripts/models.mjs` and
+   refuses any that doesn't match.
+
+Files already in `models/` with the right hash are left alone, so rerunning is
+cheap. `npm run check` fails if either model is missing.
+
+**Not in git.** `models/` is gitignored like `vendor/`; `w600k_r50.onnx` alone
+is over GitHub's 100MB file limit.
+
+**Don't swap them casually.** `lib/face.js` is verified against these exact
+files. A different detector or recogniser won't throw, it just gives plausible
+but worse scores, so changing a hash means re-checking parity and re-tuning
+thresholds.
+
+**Licence.** InsightFace's code is MIT-licensed, but its pretrained models are
+licensed for **non-commercial research use only**.
+
 ## Dev loop
 
 | Change | What to do |
@@ -65,6 +95,7 @@ gap between the lowest true match and the highest false one.
 | `panel.js`, `panel.html` | Close and reopen the side panel |
 | `engine.js`, `engine.html`, `lib/`, `background.js`, `manifest.json` | Reload the extension, then refresh WhatsApp Web |
 | `page.js`, `relay.js` | Reload the extension, then refresh WhatsApp Web |
+| `models/` | Reload the extension, then refresh WhatsApp Web |
 
 `Alt+Shift+R` reloads the extension from anywhere in Chrome. Any reload
 disconnects the content scripts already running in open WhatsApp tabs, and
@@ -105,8 +136,9 @@ page.js        MAIN world. The only file that touches wa-js / WhatsApp internals
 Recognition lives in an offscreen extension page: a content script would load
 ONNX Runtime and 190MB of models into WhatsApp's own tab on every reload, and
 the side panel isn't running when it's closed. The engine loads the models from
-the extension's `models/` folder and keeps them loaded while Chrome runs. Images cross each boundary as data
-URLs, one at a time, which keeps memory flat regardless of batch size.
+the extension's `models/` folder and keeps them loaded while Chrome runs. Images
+cross each boundary as data URLs, one at a time, which keeps memory flat
+regardless of batch size.
 
 `lib/face.js` is a plain-JS port of InsightFace's SCRFD detection, 5-point
 similarity-transform alignment, and ArcFace embedding. It is verified against the
