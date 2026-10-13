@@ -192,8 +192,10 @@ test('onFailure: engine errors pause, except an image the engine cannot decode',
 });
 
 test('notifyText', () => {
-  assert.equal(notifyText(W('a', { name: 'carmel', srcName: 'כיתה א2' }), 1), '1 new photo of carmel in כיתה א2');
-  assert.equal(notifyText(W('a', { name: 'carmel', srcName: 'כיתה א2' }), 3), '3 new photos of carmel in כיתה א2');
+  const w = W('a', { name: 'carmel', srcName: 'כיתה א2' });
+  assert.equal(notifyText(w, 1, 'en'), '1 new photo of carmel in כיתה א2');
+  assert.equal(notifyText(w, 3, 'en'), '3 new photos of carmel in כיתה א2');
+  assert.equal(notifyText(w, 3, 'he'), '3 תמונות חדשות של carmel בקבוצה כיתה א2');
 });
 
 test('ensureFrom: a cursor from before album labels labels only photos after it', () => {
