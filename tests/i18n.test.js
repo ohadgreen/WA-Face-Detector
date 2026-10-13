@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { SUPPORTED, normalize, resolveLang, dirOf, t, isSelfDst, STRINGS } from '../lib/i18n.js';
 
 test('normalize: Hebrew tags, including the legacy iw and any case or separator', () => {
@@ -115,4 +116,29 @@ test('isSelfDst: new watches by kind, old ones by their saved English name', () 
   assert.equal(isSelfDst({ dstKind: 'group', dstName: 'Grandparents' }), false);
   assert.equal(isSelfDst({ dstName: 'Grandparents' }), false);
   assert.equal(isSelfDst({}), false);
+});
+
+// panel.html keeps its English text so the file reads naturally; applyStatic
+// overwrites it from the dictionary. Both must agree, or switching back to
+// English would change wording, and a typo'd key would show the raw key.
+const html = readFileSync(new URL('../panel.html', import.meta.url), 'utf8');
+const squash = (x) => x.replace(/\s+/g, ' ').trim();
+
+test('panel.html: every data-i18n* key exists in the dictionary', () => {
+  const keys = [...html.matchAll(/data-i18n(?:-ph|-title|-label)?="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(keys.length > 20, 'expected the panel to be marked up');
+  for (const k of keys) assert.ok(k in STRINGS, `unknown key ${k}`);
+});
+
+test('panel.html: the English in the HTML is the English in the dictionary', () => {
+  for (const [, key, text] of html.matchAll(/<\w+[^>]*\sdata-i18n="([^"]+)"[^>]*>([^<]*)</g)) {
+    assert.equal(squash(text), STRINGS[key].en, key);
+  }
+  for (const [attr, data] of [['placeholder', 'ph'], ['title', 'title'], ['label', 'label']]) {
+    for (const [tag] of html.matchAll(new RegExp(`<[^>]*data-i18n-${data}="[^"]+"[^>]*>`, 'g'))) {
+      const key = tag.match(new RegExp(`data-i18n-${data}="([^"]+)"`))[1];
+      const value = tag.match(new RegExp(`\\s${attr}="([^"]*)"`))?.[1];
+      assert.equal(value, STRINGS[key].en, `${key} (${attr})`);
+    }
+  }
 });
