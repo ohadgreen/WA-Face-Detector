@@ -1,8 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Class Photo Filter",
-  "version": "0.12",
-  "description": "Finds photos of your child in WhatsApp group albums and queues them for the family chat.",
+  "name": "__MSG_appName__",
+  "version": "0.13",
+  "description": "__MSG_appDesc__",
+  "default_locale": "en",
   "permissions": [
     "storage",
     "sidePanel",
@@ -14,7 +15,7 @@
     "https://web.whatsapp.com/*"
   ],
   "action": {
-    "default_title": "Class Photo Filter"
+    "default_title": "__MSG_appName__"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
@@ -65,7 +66,7 @@
       "suggested_key": {
         "default": "Alt+Shift+R"
       },
-      "description": "Reload this extension"
+      "description": "__MSG_reloadDesc__"
     }
   }
 }
