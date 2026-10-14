@@ -501,8 +501,26 @@ async function review(w, ids = null) {
 }
 
 function renderReview() {
-  const { watch, rows, skipped } = current;
+  const { rows } = current;
   $('reviewCard').hidden = false;
+  // An expired tile's text carries data-i18n, so applyStatic translates it.
+  $('grid').innerHTML = rows.map((r, i) => r.thumb ? `
+    <label class="thumb"><img src="${r.thumb}">
+      <span class="s"><input type="checkbox" data-i="${i}" checked>${r.score.toFixed(3)}
+      <span class="muted">${r.px}px</span></span></label>` : `
+    <div class="thumb gone">${r.gone === 'expired'
+      ? `<div class="ph" data-i18n="noLongerAvailable">${tt('noLongerAvailable')}</div>`
+      : `<div class="ph">${esc(r.gone)}</div>`}
+      <span class="s">${r.score.toFixed(3)} <span class="muted">${r.px}px</span></span></div>`).join('');
+  $('sendBtn').disabled = !rows.some((r) => r.thumb);
+  $('doneBtn').disabled = !!current.reviewed;
+  renderReviewText();
+}
+
+// The review's words only. A language switch calls this and never rebuilds
+// the grid: that would tick again every photo the user had unticked.
+function renderReviewText() {
+  const { watch, rows, skipped } = current;
   $('reviewTitle').innerHTML = tt('reviewTitle', { n: rows.length, name: nm(watch.name), album: !!current.album });
   $('reviewHint').innerHTML = [
     rows.length ? tt('reviewHint', { dst: nm(dstLabel(watch)) }) : tt('reviewNone'),
@@ -510,14 +528,6 @@ function renderReview() {
     // skips the older photos it never reached. Say so before they click.
     skipped ? tt('reviewStopped', { n: skipped }) : '',
   ].filter(Boolean).join(' ');
-  $('grid').innerHTML = rows.map((r, i) => r.thumb ? `
-    <label class="thumb"><img src="${r.thumb}">
-      <span class="s"><input type="checkbox" data-i="${i}" checked>${r.score.toFixed(3)}
-      <span class="muted">${r.px}px</span></span></label>` : `
-    <div class="thumb gone"><div class="ph">${r.gone === 'expired' ? tt('noLongerAvailable') : esc(r.gone)}</div>
-      <span class="s">${r.score.toFixed(3)} <span class="muted">${r.px}px</span></span></div>`).join('');
-  $('sendBtn').disabled = !rows.some((r) => r.thumb);
-  $('doneBtn').disabled = !!current.reviewed;
   $('doneBtn').title = current.reviewed ? tt('alreadyReviewed') : '';
 }
 
@@ -637,8 +647,8 @@ function applyLang(next) {
   showPick('src'); showPick('dst');
 }
 
-// A live switch: redraw everything with text in it. The open review keeps
-// its thumbnails (they're in current.rows), so nothing is downloaded again.
+// A live switch: redraw everything with text in it. The open review only
+// has its words redrawn: its grid, thumbnails and ticks stay as they are.
 async function relang() {
   const next = await resolveUiLang();
   if (next === lang) return;
@@ -646,7 +656,7 @@ async function relang() {
   await showModelState();
   await renderSetup();
   await renderWatches();
-  if (current && !$('reviewCard').hidden) renderReview();
+  if (current && !$('reviewCard').hidden) renderReviewText();
 }
 
 // The panel writes uiLangPref (one writer); onChanged above applies it.

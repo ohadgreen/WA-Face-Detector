@@ -28,7 +28,7 @@ for (const f of sources) {
 // chrome.i18n fills the manifest's __MSG_x__ from _locales/<lang>/messages.json.
 // A missing one shows the raw placeholder on the Extensions page, or makes
 // Chrome refuse to load the extension, with nothing in any console.
-const used = [...new Set([...JSON.stringify(m).matchAll(/__MSG_(w+)__/g)].map((x) => x[1]))];
+const used = [...new Set([...JSON.stringify(m).matchAll(/__MSG_(\w+)__/g)].map((x) => x[1]))];
 if (used.length && !m.default_locale) { console.log('LOCALE manifest has __MSG_ but no default_locale'); bad++; }
 for (const loc of ['en', 'he']) {
   let msgs;
