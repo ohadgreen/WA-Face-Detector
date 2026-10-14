@@ -85,7 +85,7 @@ const ensureModels = async () => (await engine('status')).models;
 
 async function showModelState() {
   const have = (await idbGet('det')) && (await idbGet('rec'));
-  $('modelState').textContent = have ? '\u2713 models stored' : 'not set up yet';
+  $('modelState').textContent = have ? tt('modelsStored') : tt('modelsNotSet');
 }
 
 for (const [inputId, key] of [['detFile', 'det'], ['recFile', 'rec']]) {
@@ -141,14 +141,15 @@ async function loadGroups() {
   groups = g;
   allChats = [...(self ? [self] : []), ...g, ...people];
 
-  $('srcGroup').innerHTML = g.map((x) =>
-    `<option value="${x.id}">${esc(x.name)}</option>`).join('');
-
   const opt = (x) => `<option value="${x.id}">${esc(x.name)}</option>`;
+  $('srcGroup').innerHTML = g.map(opt).join('');
+  // The self chat and the headings carry data-i18n*, so applyStatic
+  // translates them on a switch without rebuilding the lists (which would
+  // lose the filters and scroll position).
   $('dstGroup').innerHTML =
-    (self ? opt(self) : '') +
-    `<optgroup label="Groups">${g.map(opt).join('')}</optgroup>` +
-    `<optgroup label="Direct chats">${people.map(opt).join('')}</optgroup>`;
+    (self ? `<option value="${self.id}" data-i18n="messageYourself">${esc(tt('messageYourself'))}</option>` : '') +
+    `<optgroup label="${esc(tt('groups'))}" data-i18n-label="groups">${g.map(opt).join('')}</optgroup>` +
+    `<optgroup label="${esc(tt('directChats'))}" data-i18n-label="directChats">${people.map(opt).join('')}</optgroup>`;
 
   applyFilters();
 
@@ -174,8 +175,8 @@ function showPick(which) {
   const el = $(which + 'Pick');
   const chat = picked[which];
   el.innerHTML = chat
-    ? `<span>${esc(chat.name)}</span>` + (open[which] ? '' : '<span class="chg">change</span>')
-    : 'nothing selected';
+    ? `<span>${nm(chatLabel(chat))}</span>` + (open[which] ? '' : `<span class="chg">${tt('change')}</span>`)
+    : tt('nothingSelected');
   el.classList.toggle('set', !!chat);
   el.classList.toggle('folded', !open[which]);
   updateSaveState();
@@ -187,13 +188,13 @@ function showPick(which) {
 let saving = false;
 function updateSaveState() {
   const missing = [
-    !picked.src && 'group to watch',
-    !picked.dst && 'where to send matches',
-    !$('childName').value.trim() && "child's name",
-    !$('refFiles').files.length && 'reference photos',
+    !picked.src && tt('needSrc'),
+    !picked.dst && tt('needDst'),
+    !$('childName').value.trim() && tt('needName'),
+    !$('refFiles').files.length && tt('needRefs'),
   ].filter(Boolean);
   $('addWatch').disabled = saving || missing.length > 0;
-  $('addWatch').title = missing.length ? 'Still needed: ' + missing.join(', ') : '';
+  $('addWatch').title = missing.length ? tt('stillNeeded', { items: missing.join(', ') }) : '';
 }
 $('childName').addEventListener('input', updateSaveState);
 $('refFiles').addEventListener('change', updateSaveState);
@@ -274,7 +275,8 @@ $('addWatch').addEventListener('click', async () => {
     watches.push({
       id: 'w' + Date.now(), name,
       src: picked.src.id, srcName: picked.src.name,
-      dst: picked.dst.id, dstName: picked.dst.name,
+      // dstKind lets the self chat show in the UI language (isSelfDst).
+      dst: picked.dst.id, dstName: picked.dst.name, dstKind: picked.dst.kind,
       threshold: parseFloat($('thresh').value) || 0.35,
       refs, lastSeen: 0, auto: $('autoWatch').checked,
     });
@@ -301,17 +303,17 @@ async function renderSetup() {
   $('setupList').innerHTML = watches.length
     ? watches.map((w) => `<div class="row" style="justify-content:space-between;padding:6px 0;
         border-bottom:1px solid var(--line)">
-        <span><b>${esc(w.name)}</b> <span class="muted">&larr; ${esc(w.srcName)}</span></span>
+        <span><b>${nm(w.name)}</b> <span class="muted">${tt('arrowFrom')} ${nm(w.srcName)}</span></span>
         <span class="row" style="gap:6px">
-          <label class="check inline" title="Check new photos in the background and alert me">
-            <input type="checkbox" data-auto="${w.id}" ${isAuto(w) ? 'checked' : ''}>Auto</label>
+          <label class="check inline" title="${esc(tt('autoTitle'))}">
+            <input type="checkbox" data-auto="${w.id}" ${isAuto(w) ? 'checked' : ''}>${tt('autoShort')}</label>
           <button class="act ghost" data-reset="${w.id}" style="padding:3px 9px;font-size:11px"
-            title="Forget last seen and waiting matches; the next check covers the last ${FIRST_SCAN_DAYS} days"
-            ${w.lastSeen || pending[w.id]?.length ? '' : 'disabled'}>Reset</button>
-          <button class="act ghost" data-del="${w.id}" style="padding:3px 9px;font-size:11px">Remove</button>
+            title="${esc(tt('resetTitle', { days: FIRST_SCAN_DAYS }))}"
+            ${w.lastSeen || pending[w.id]?.length ? '' : 'disabled'}>${tt('reset')}</button>
+          <button class="act ghost" data-del="${w.id}" style="padding:3px 9px;font-size:11px">${tt('remove')}</button>
         </span>
       </div>`).join('')
-    : '<p class="hint">Nothing yet.</p>';
+    : `<p class="hint">${tt('nothingYet')}</p>`;
 
   const on = (sel, ev, fn) => $('setupList').querySelectorAll(sel).forEach((el) =>
     el.addEventListener(ev, () => fn(el).catch((e) => log('ERROR: ' + e.message))));
@@ -357,34 +359,37 @@ async function renderWatches() {
   const { pending = {}, autoState = {} } = await chrome.storage.local.get(['pending', 'autoState']);
   const box = $('watchList');
   if (!watches.length) {
-    box.innerHTML = '<div class="card"><p class="hint">No watches yet. Open Setup to add one.</p></div>';
+    box.innerHTML = `<div class="card"><p class="hint">${tt('noWatches')}</p></div>`;
     return;
   }
-  const when = (t) => new Date(t * 1000).toLocaleString();
-  box.innerHTML = watches.map((w) => isAuto(w) ? `
+  const when = (sec) => new Date(sec * 1000).toLocaleString(lang);
+  const route = (w) => `${nm(w.srcName)} ${tt('arrowTo')} ${nm(dstLabel(w))}`;
+  const threshold = (w) => tt('thresholdIs', { v: w.threshold });
+  box.innerHTML = watches.map((w) => {
+    const n = pending[w.id]?.length || 0;
+    return isAuto(w) ? `
     <div class="card watch" data-w="${w.id}">
       <div class="row" style="justify-content:space-between">
-        <span class="title">${esc(w.name)}</span>
-        <span class="pill ${pending[w.id]?.length ? '' : 'none'}">${pending[w.id]?.length
-          ? `${pending[w.id].length} waiting` : 'watching'}</span>
+        <span class="title">${nm(w.name)}</span>
+        <span class="pill ${n ? '' : 'none'}">${n ? tt('nWaiting', { n }) : tt('watching')}</span>
       </div>
-      <p class="hint" style="margin:6px 0">${esc(w.srcName)} &rarr; ${esc(w.dstName)}
-        &middot; threshold ${w.threshold} &middot; auto-watch on
-        &middot; checked up to ${autoState[w.id] ? when(autoState[w.id].lastChecked) : 'not yet'}</p>
-      <button class="act" data-review="${w.id}" ${pending[w.id]?.length ? '' : 'disabled'}>${pending[w.id]?.length
-        ? `Review ${pending[w.id].length} photo(s) of ${esc(w.name)}` : 'No matches waiting'}</button>
+      <p class="hint" style="margin:6px 0">${[route(w), threshold(w), tt('autoOn'),
+        tt('checkedUpTo', { when: autoState[w.id] ? when(autoState[w.id].lastChecked) : tt('notYet') }),
+      ].join(' &middot; ')}</p>
+      <button class="act" data-review="${w.id}" ${n ? '' : 'disabled'}>${n
+        ? tt('reviewN', { n, name: nm(w.name) }) : tt('noMatchesWaiting')}</button>
     </div>` : `
     <div class="card watch" data-w="${w.id}">
       <div class="row" style="justify-content:space-between">
-        <span class="title">${esc(w.name)}</span>
-        <span class="pill none" data-count="${w.id}">checking...</span>
+        <span class="title">${nm(w.name)}</span>
+        <span class="pill none" data-count="${w.id}">${tt('checking')}</span>
       </div>
-      <p class="hint" style="margin:6px 0">${esc(w.srcName)} &rarr; ${esc(w.dstName)}
-        &middot; threshold ${w.threshold}
-        &middot; last seen ${w.lastSeen ? when(w.lastSeen)
-          : `never (first check covers the last ${FIRST_SCAN_DAYS} days)`}</p>
-      <button class="act" data-scan="${w.id}" disabled>Check for new photos</button>
-    </div>`).join('');
+      <p class="hint" style="margin:6px 0">${[route(w), threshold(w),
+        w.lastSeen ? tt('lastSeen', { when: when(w.lastSeen) }) : tt('lastSeenNever', { days: FIRST_SCAN_DAYS }),
+      ].join(' &middot; ')}</p>
+      <button class="act" data-scan="${w.id}" disabled>${tt('checkForNew')}</button>
+    </div>`;
+  }).join('');
 
   box.querySelectorAll('[data-review]').forEach((b) => b.addEventListener('click', () =>
     review(watches.find((w) => w.id === b.dataset.review)).catch((e) => log('ERROR: ' + e.message))));
@@ -396,14 +401,14 @@ async function renderWatches() {
       const btn = box.querySelector(`[data-scan="${w.id}"]`);
       if (!pill || !btn) continue; // re-rendered meanwhile
       if (fresh.length) {
-        pill.textContent = `${fresh.length} new`;
+        pill.textContent = tt('nNew', { n: fresh.length });
         pill.className = 'pill';
         btn.disabled = false;
-        btn.textContent = `Find ${w.name} in ${fresh.length} new photos`;
+        btn.innerHTML = tt('findIn', { name: nm(w.name), n: fresh.length });
         btn.addEventListener('click', () => scan(w).catch((e) => log('ERROR: ' + e.message)));
       } else {
-        pill.textContent = 'up to date';
-        btn.textContent = 'Nothing new';
+        pill.textContent = tt('upToDate');
+        btn.textContent = tt('nothingNew');
       }
     } catch (e) { log(`${w.name}: ${e.message}`); }
   }
@@ -484,7 +489,8 @@ async function review(w, ids = null) {
       rows.push({ id: p.id, score: p.score, px: p.px, thumb: await thumbnail(dataUrl) });
     } catch (e) {
       rows.push({ id: p.id, score: p.score, px: p.px, thumb: null,
-        gone: /media not found/i.test(e.message) ? 'no longer available' : e.message });
+        // 'expired' is translated when drawn, so a language switch reaches it.
+        gone: /media not found/i.test(e.message) ? 'expired' : e.message });
     }
   }
   current = {
@@ -497,23 +503,22 @@ async function review(w, ids = null) {
 function renderReview() {
   const { watch, rows, skipped } = current;
   $('reviewCard').hidden = false;
-  $('reviewTitle').textContent = `${rows.length} photo(s) of ${watch.name}` +
-    (current.album ? ' in this album' : '');
-  $('reviewHint').textContent = (rows.length
-    ? `Untick anything wrong, then add them to ${watch.dstName}. You press Enter to send.`
-    : 'Nothing matched. "Mark as seen" to skip these next time.')
+  $('reviewTitle').innerHTML = tt('reviewTitle', { n: rows.length, name: nm(watch.name), album: !!current.album });
+  $('reviewHint').innerHTML = [
+    rows.length ? tt('reviewHint', { dst: nm(dstLabel(watch)) }) : tt('reviewNone'),
     // lastSeen is a single timestamp, so marking a stopped scan as seen also
     // skips the older photos it never reached. Say so before they click.
-    + (skipped ? ` Scan was stopped: "Mark as seen" also skips the ${skipped} older photo(s) not checked.` : '');
+    skipped ? tt('reviewStopped', { n: skipped }) : '',
+  ].filter(Boolean).join(' ');
   $('grid').innerHTML = rows.map((r, i) => r.thumb ? `
     <label class="thumb"><img src="${r.thumb}">
       <span class="s"><input type="checkbox" data-i="${i}" checked>${r.score.toFixed(3)}
       <span class="muted">${r.px}px</span></span></label>` : `
-    <div class="thumb gone"><div class="ph">${esc(r.gone)}</div>
+    <div class="thumb gone"><div class="ph">${r.gone === 'expired' ? tt('noLongerAvailable') : esc(r.gone)}</div>
       <span class="s">${r.score.toFixed(3)} <span class="muted">${r.px}px</span></span></div>`).join('');
   $('sendBtn').disabled = !rows.some((r) => r.thumb);
   $('doneBtn').disabled = !!current.reviewed;
-  $('doneBtn').title = current.reviewed ? 'already reviewed' : '';
+  $('doneBtn').title = current.reviewed ? tt('alreadyReviewed') : '';
 }
 
 $('sendBtn').addEventListener('click', async () => {
