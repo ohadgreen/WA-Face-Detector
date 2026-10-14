@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="i18n-pending">
 <head>
 <meta charset="utf-8">
 <title>Class Photo Filter</title>
@@ -34,7 +34,7 @@
   button.act:disabled { opacity: .45; cursor: default; }
   .row { display: flex; gap: 8px; align-items: center; }
   .muted { color: var(--muted); }
-  .watch { border-left: 3px solid var(--accent); }
+  .watch { border-inline-start: 3px solid var(--accent); }
   .watch .title { font-weight: 650; font-size: 13.5px; }
   .pill { background: #eaf6ee; color: #14663c; border-radius: 20px; padding: 2px 9px;
           font-size: 11px; font-weight: 650; }
@@ -53,7 +53,7 @@
   hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
   .pick { display: flex; justify-content: space-between; gap: 8px; width: 100%;
           margin-top: 5px; padding: 5px 8px; border: 0; border-radius: 6px; font: inherit;
-          font-size: 12px; text-align: left; background: #f0f0f2; color: var(--muted); }
+          font-size: 12px; text-align: start; background: #f0f0f2; color: var(--muted); }
   .pick.set { background: #eaf6ee; color: #14663c; font-weight: 600; cursor: pointer; }
   .pick.folded { padding: 8px 10px; font-size: 13px; outline: 1px solid #b9dfc8; }
   .pick .chg { font-weight: 400; text-decoration: underline; white-space: nowrap; }
@@ -65,14 +65,21 @@
                background: #eee; border-radius: 4px; color: var(--muted); font-size: 11px;
                text-align: center; padding: 4px; }
   select option:checked { background: #1a7f4b linear-gradient(0deg,#1a7f4b,#1a7f4b); color: #fff; }
+  /* Hidden until panel.js has set the language, so a Hebrew panel never
+     flashes English first. If panel.js never runs (a module failed to
+     load), the English panel appears after a second instead of a blank one. */
+  .i18n-pending body { visibility: hidden; animation: cpf-reveal 0s 1s forwards; }
+  @keyframes cpf-reveal { to { visibility: visible; } }
+  /* Spacing meant for Latin capitals breaks up Hebrew words. */
+  :lang(he) label { letter-spacing: 0; }
 </style>
 </head>
 <body>
 <header>
   <h1>Class Photo Filter</h1>
   <nav class="tabs" role="tablist">
-    <button id="tabSetup" role="tab" aria-selected="false" aria-controls="paneSetup">Setup</button>
-    <button id="tabRun" role="tab" aria-selected="true" aria-controls="paneRun" class="on">Photos</button>
+    <button id="tabSetup" role="tab" aria-selected="false" aria-controls="paneSetup" data-i18n="tabSetup">Setup</button>
+    <button id="tabRun" role="tab" aria-selected="true" aria-controls="paneRun" class="on" data-i18n="tabPhotos">Photos</button>
   </nav>
 </header>
 
@@ -83,41 +90,50 @@
       <h2 id="reviewTitle">Matches</h2>
       <p class="hint" id="reviewHint"></p>
       <div class="row" style="margin:8px 0">
-        <button class="act" id="sendBtn">Add to composer</button>
-        <button class="act ghost" id="doneBtn">Mark as seen</button>
+        <button class="act" id="sendBtn" data-i18n="addToComposer">Add to composer</button>
+        <button class="act ghost" id="doneBtn" data-i18n="markSeen">Mark as seen</button>
       </div>
       <div class="grid" id="grid"></div>
     </div>
-    <button class="act ghost" id="stopBtn" hidden>Stop scan</button>
-    <div id="log">idle</div>
+    <button class="act ghost" id="stopBtn" hidden data-i18n="stopScan">Stop scan</button>
+    <div id="log" dir="ltr">idle</div>
   </section>
 
   <section class="pane" id="paneSetup">
     <div class="card">
-      <h2>Add a group to watch</h2>
-      <label>Watch this group</label>
-      <input type="text" id="srcFilter" placeholder="filter by name..." style="margin-bottom:4px">
+      <h2 data-i18n="language">Language</h2>
+      <select id="langPref">
+        <option value="auto" data-i18n="langAuto">Automatic (follow WhatsApp)</option>
+        <option value="en" lang="en" dir="ltr">English</option>
+        <option value="he" lang="he" dir="rtl">עברית</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <h2 data-i18n="addGroup">Add a group to watch</h2>
+      <label data-i18n="watchThisGroup">Watch this group</label>
+      <input type="text" id="srcFilter" dir="auto" placeholder="filter by name..." data-i18n-ph="filterByName" style="margin-bottom:4px">
       <select id="srcGroup" size="6"></select>
       <button type="button" class="pick" id="srcPick">nothing selected</button>
-      <label>Send matches to</label>
-      <input type="text" id="dstFilter" placeholder="filter by name..." style="margin-bottom:4px">
+      <label data-i18n="sendMatchesTo">Send matches to</label>
+      <input type="text" id="dstFilter" dir="auto" placeholder="filter by name..." data-i18n-ph="filterByName" style="margin-bottom:4px">
       <select id="dstGroup" size="6"></select>
       <button type="button" class="pick" id="dstPick">nothing selected</button>
-      <label>Child's name</label><input type="text" id="childName" placeholder="e.g. Nir">
-      <label>Reference photos of that child</label>
+      <label data-i18n="childName">Child's name</label><input type="text" id="childName" dir="auto" placeholder="e.g. Nir" data-i18n-ph="childNameExample">
+      <label data-i18n="refPhotos">Reference photos of that child</label>
       <input type="file" id="refFiles" accept="image/*" multiple>
-      <label>Match threshold</label><input type="number" id="thresh" value="0.35" step="0.01" min="0.05" max="0.9">
-      <p class="hint">Start at 0.35. Lower it if the child is usually far from the camera.</p>
+      <label data-i18n="matchThreshold">Match threshold</label><input type="number" id="thresh" dir="ltr" value="0.35" step="0.01" min="0.05" max="0.9">
+      <p class="hint" data-i18n="thresholdHint">Start at 0.35. Lower it if the child is usually far from the camera.</p>
       <label class="check"><input type="checkbox" id="autoWatch" checked>
-        Auto-watch: check new photos in the background and alert me</label>
+        <span data-i18n="autoWatchLabel">Auto-watch: check new photos in the background and alert me</span></label>
       <div class="row" style="margin-top:10px">
-        <button class="act" id="addWatch" disabled>Save watch</button>
-        <button class="act ghost" id="refreshGroups">Reload groups</button>
+        <button class="act" id="addWatch" disabled data-i18n="saveWatch">Save watch</button>
+        <button class="act ghost" id="refreshGroups" data-i18n="reloadGroups">Reload groups</button>
       </div>
     </div>
 
     <div class="card">
-      <h2>Saved watches</h2>
+      <h2 data-i18n="savedWatches">Saved watches</h2>
       <div id="setupList"></div>
     </div>
   </section>

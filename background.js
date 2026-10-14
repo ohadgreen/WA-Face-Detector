@@ -3,6 +3,7 @@ import {
   recordResult, skipResult, markSeen, forget, pendingTotal, Batcher, notifyText, onFailure,
   ensureFrom, pruneFound, albumStates,
 } from './lib/auto-state.js';
+import { t, resolveLang } from './lib/i18n.js';
 
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
@@ -30,6 +31,23 @@ function alog(s) {
     autoLog.push({ n: (autoLog.at(-1)?.n ?? 0) + 1, s });
     await chrome.storage.session.set({ autoLog: autoLog.slice(-200) });
   }).catch(() => {});
+}
+
+/* ---------- language: follows WhatsApp, as the panel does ---------- */
+
+// Same inputs and the same resolveLang as the panel, so the tooltip and
+// notifications can't disagree with it. Never stored resolved.
+async function uiLang() {
+  const { waLang, uiLangPref } = await chrome.storage.local.get(['waLang', 'uiLangPref']);
+  return resolveLang({ pref: uiLangPref, wa: waLang, browser: chrome.i18n.getUILanguage() });
+}
+
+// waLang is written only here. Only on a change, so an open panel doesn't
+// re-render on every WhatsApp reload.
+async function saveWaLang(lang) {
+  const next = lang ?? null;
+  const { waLang = null } = await chrome.storage.local.get('waLang');
+  if (waLang !== next) await chrome.storage.local.set({ waLang: next });
 }
 
 /* ---------- engine (offscreen document) ---------- */
@@ -109,16 +127,17 @@ async function updateBadge(pending) {
   const n = pendingTotal(pending);
   await chrome.action.setBadgeBackgroundColor({ color: modelsMissing ? '#b3261e' : '#1a7f4b' });
   await chrome.action.setBadgeText({ text: modelsMissing ? '!' : n ? String(n) : '' });
+  const lang = await uiLang();
   await chrome.action.setTitle({
-    title: modelsMissing ? 'Class Photo Filter - models missing, run npm run models'
-      : n ? `Class Photo Filter - ${n} match(es) waiting` : 'Class Photo Filter',
+    title: modelsMissing ? t(lang, 'badgeNoModels')
+      : n ? t(lang, 'badgeWaiting', { n }) : t(lang, 'badgeIdle'),
   });
 }
 
 /* ---------- in-chat album labels ---------- */
 
-// Label text lives here, not in page.js, so the page needs no language.
-const LABEL_STRINGS = { inProgress: 'in progress', reviewed: 'reviewed' };
+// Label text lives here, not in page.js, so the page needs no dictionary.
+const labelStrings = (lang) => ({ inProgress: t(lang, 'labelInProgress'), reviewed: t(lang, 'labelReviewed') });
 
 // One push carries every watched group and replaces the page's whole label
 // state, so a group whose watch was turned off loses its labels too. At most
@@ -129,14 +148,19 @@ function pushLabels() {
   pushTimer ??= setTimeout(async () => {
     pushTimer = null;
     const { watches, ...state } = await load();
-    await callPage('albumState', albumStates(watches, state, LABEL_STRINGS, Math.floor(Date.now() / 1000)))
+    const strings = labelStrings(await uiLang());
+    await callPage('albumState', albumStates(watches, state, strings, Math.floor(Date.now() / 1000)))
       .catch(() => {}); // no tab or not ready: the next 'ready' pushes again
   }, 1000);
 }
 
-// Auto-watch toggled or a watch removed in the panel (it owns `watches`).
+// Auto-watch toggled or a watch removed in the panel (it owns `watches`), or
+// the language changed: labels and the tooltip are redrawn in it.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === 'local' && changes.watches) pushLabels();
+  if (area !== 'local') return;
+  const relang = changes.waLang || changes.uiLangPref;
+  if (changes.watches || relang) pushLabels();
+  if (relang) updateBadge().catch(() => {});
 });
 
 // sidePanel.open needs the click's user gesture, so it is the first call,
@@ -183,14 +207,15 @@ async function announce(drained) {
   const due = batches.due(Date.now(), drained);
   if (!due.length) return;
   const { watches } = await load();
+  const lang = await uiLang();
   for (const { watchId, n } of due) {
     const w = watches.find((x) => x.id === watchId);
     if (!w) continue;
     await chrome.notifications.create(`cpf-${watchId}-${Date.now()}`, {
       type: 'basic', iconUrl: await notifyIcon(),
-      title: 'Class Photo Filter', message: notifyText(w, n), priority: 1,
+      title: 'Class Photo Filter', message: notifyText(w, n, lang), priority: 1,
     });
-    alog(`notified: ${notifyText(w, n)}`);
+    alog(`notified: ${notifyText(w, n, 'en')}`); // the log stays English
   }
 }
 
@@ -325,7 +350,11 @@ let waTab = null;
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg?.__cpf !== 'evt') return;
   if (sender.tab) waTab = { id: sender.tab.id, windowId: sender.tab.windowId };
-  if (msg.type === 'ready') { catchUp('WhatsApp ready'); pushLabels(); }
+  if (msg.type === 'ready') {
+    saveWaLang(msg.data?.lang).catch(() => {});
+    catchUp('WhatsApp ready'); pushLabels();
+  }
+  else if (msg.type === 'lang') saveWaLang(msg.data?.lang).catch(() => {});
   else if (msg.type === 'newImage') onNewImage(msg.data);
   else if (msg.type === 'openAlbum') openAlbum(msg.data, sender);
   else if (msg.type === 'labelsBroken') {

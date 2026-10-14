@@ -25,6 +25,15 @@
     r.readAsDataURL(blob);
   });
 
+  // WhatsApp's UI language, as the raw tag it uses (lib/i18n.js normalises
+  // it). Read only - nothing here changes WhatsApp's settings. WhatsApp sets
+  // <html lang> from its own language setting ("he" with dir="rtl" when set
+  // to Hebrew). Not localStorage's WALangPhonePref: that is the phone's
+  // language, and stays "en-GB" with WhatsApp Web in Hebrew (spec, Findings).
+  function waLanguage() {
+    return document.documentElement.lang || null;
+  }
+
   const actions = {
     async ping() {
       await ready;
@@ -44,11 +53,12 @@
         .map((c) => ({ id: c.id.toString(), name: nameOf(c), kind: 'person' }))
         .sort((a, b) => a.name.localeCompare(b.name));
 
-      // Message-yourself chat: the safest possible destination while developing.
+      // Message-yourself chat: the default destination. The panel shows it by
+      // kind, in the UI language; this name is only a fallback.
       let self = null;
       try {
         const me = WPP.conn.getMyUserId();
-        self = { id: me.toString(), name: 'Message yourself (test)', kind: 'self' };
+        self = { id: me.toString(), name: 'Message yourself', kind: 'self' };
       } catch (e) { /* older builds may not expose it */ }
 
       return { groups, people, self };
@@ -138,7 +148,11 @@
      are reported, because only the background knows which chats are watched. */
   const emit = (type, data) => window.postMessage({ __cpf: 'evt', type, data }, '*');
   ready.then(() => {
-    emit('ready');
+    emit('ready', { lang: waLanguage() });
+    // If WhatsApp ever switches language without reloading, follow it
+    // anyway. When it does reload, this never fires and 'ready' covers it.
+    new MutationObserver(() => emit('lang', { lang: waLanguage() }))
+      .observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
     WPP.on('chat.new_message', (m) => {
       if (m?.type !== 'image') return;
       emit('newImage', { id: String(m.id), chatId: String(m.id.remote), t: m.t });

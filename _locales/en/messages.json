@@ -1,0 +1,5 @@
+{
+  "appName": { "message": "Class Photo Filter" },
+  "appDesc": { "message": "Finds photos of your child in WhatsApp group albums and queues them for the family chat." },
+  "reloadDesc": { "message": "Reload this extension" }
+}
