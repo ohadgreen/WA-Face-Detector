@@ -1,4 +1,13 @@
 import { isAuto } from './lib/auto-state.js';
+import { t, resolveLang, dirOf, isSelfDst } from './lib/i18n.js';
+
+/* ---------- language ---------- */
+
+// Resolved from waLang (background) and uiLangPref (this panel) - never
+// stored, so the panel and the background can't disagree. User-facing text
+// goes through tt(); log() text stays English.
+let lang = 'en';
+const tt = (key, vars) => t(lang, key, vars);
 
 const $ = (id) => document.getElementById(id);
 const logEl = $('log');
@@ -65,9 +74,9 @@ const idbGet = async (k) => {
 const idbPut = async (k, v) => {
   const db = await idb();
   return new Promise((res, rej) => {
-    const t = db.transaction('m', 'readwrite');
-    t.objectStore('m').put(v, k);
-    t.oncomplete = () => res(); t.onerror = () => rej(t.error);
+    const tx = db.transaction('m', 'readwrite');
+    tx.objectStore('m').put(v, k);
+    tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
   });
 };
 
@@ -119,6 +128,12 @@ const sinceOf = (w) => w.lastSeen || Math.floor(Date.now() / 1000) - FIRST_SCAN_
 let groups = [], allChats = [];
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+// Names go into innerHTML through this: escaped, and in <bdi> so a Hebrew
+// name inside English text (or the reverse) keeps its own direction.
+const nm = (s) => `<bdi>${esc(s)}</bdi>`;
+// The self chat is shown by kind, in the UI language, not by a saved name.
+const chatLabel = (c) => (c.kind === 'self' ? tt('messageYourself') : c.name);
+const dstLabel = (w) => (isSelfDst(w) ? tt('messageYourself') : w.dstName);
 
 async function loadGroups() {
   log('reading chat list...');
@@ -568,6 +583,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
     renderWatches().catch((e) => log(e.message));
     renderSetup().catch((e) => log(e.message));
   }
+  if (area === 'local' && (changes.waLang || changes.uiLangPref)) {
+    relang().catch((e) => log('language: ' + e.message));
+  }
 });
 
 /* ---------- tabs ---------- */
@@ -587,7 +605,57 @@ $('tabSetup').addEventListener('click', async () => {
   else if (!$('srcGroup').options.length) await loadGroups().catch((e) => log(e.message));
 });
 
+/* ---------- applying the language ---------- */
+
+async function resolveUiLang() {
+  const { waLang, uiLangPref } = await chrome.storage.local.get(['waLang', 'uiLangPref']);
+  $('langPref').value = uiLangPref || 'auto';
+  return resolveLang({ pref: uiLangPref, wa: waLang, browser: chrome.i18n.getUILanguage() });
+}
+
+// Everything marked up in panel.html, plus elements rendered later with the
+// same attributes (the self chat option, the destination list's headings).
+function applyStatic() {
+  for (const el of document.querySelectorAll('[data-i18n]')) el.textContent = tt(el.dataset.i18n);
+  for (const el of document.querySelectorAll('[data-i18n-ph]')) el.placeholder = tt(el.dataset.i18nPh);
+  for (const el of document.querySelectorAll('[data-i18n-title]')) el.title = tt(el.dataset.i18nTitle);
+  for (const el of document.querySelectorAll('[data-i18n-label]')) el.label = tt(el.dataset.i18nLabel);
+}
+
+// Synchronous part: direction, static text, and the parts of Setup drawn
+// from variables (pick buttons, Save's "Still needed" tooltip).
+function applyLang(next) {
+  lang = next;
+  document.documentElement.lang = lang;
+  document.documentElement.dir = dirOf(lang);
+  applyStatic();
+  showPick('src'); showPick('dst');
+}
+
+// A live switch: redraw everything with text in it. The open review keeps
+// its thumbnails (they're in current.rows), so nothing is downloaded again.
+async function relang() {
+  const next = await resolveUiLang();
+  if (next === lang) return;
+  applyLang(next);
+  await showModelState();
+  await renderSetup();
+  await renderWatches();
+  if (current && !$('reviewCard').hidden) renderReview();
+}
+
+// The panel writes uiLangPref (one writer); onChanged above applies it.
+$('langPref').addEventListener('change', () => {
+  chrome.storage.local.set({ uiLangPref: $('langPref').value });
+});
+
 (async () => {
+  // Before anything is drawn: the body stays hidden (i18n-pending) until the
+  // language is set. finally, so a failed read shows the English panel
+  // rather than a blank one.
+  try { applyLang(await resolveUiLang()); }
+  catch (e) { log('language: ' + e.message); }
+  finally { document.documentElement.classList.remove('i18n-pending'); }
   await showModelState();
   await renderSetup();
   try { const p = await callPage('ping'); log(`connected to WhatsApp (wa-js ${p.version})`); }
