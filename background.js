@@ -13,6 +13,10 @@ chrome.commands.onCommand.addListener((cmd) => {
   if (cmd === 'reload-extension') chrome.runtime.reload();
 });
 
+// Up to 0.12 the user uploaded the models and the panel kept them in this
+// database. They ship in models/ now, so free the ~190MB the old copy holds.
+chrome.runtime.onInstalled.addListener(() => { indexedDB.deleteDatabase('cpf-models'); });
+
 // Duplicated in panel.js - change both. A watch never marked as seen starts
 // this far back, because WhatsApp's links for older media have expired.
 const FIRST_SCAN_DAYS = 10;

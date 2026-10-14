@@ -111,7 +111,7 @@ test('entries are plain text: panel.js puts them into innerHTML', () => {
 
 test('isSelfDst: new watches by kind, old ones by their saved English name', () => {
   assert.equal(isSelfDst({ dstKind: 'self', dstName: 'Message yourself' }), true);
-  assert.equal(isSelfDst({ dstName: 'Message yourself (test)' }), true);   // saved before 0.13
+  assert.equal(isSelfDst({ dstName: 'Message yourself (test)' }), true);   // saved before 0.14
   assert.equal(isSelfDst({ dstName: 'Message yourself' }), true);
   assert.equal(isSelfDst({ dstKind: 'group', dstName: 'Grandparents' }), false);
   assert.equal(isSelfDst({ dstName: 'Grandparents' }), false);

@@ -1,5 +1,5 @@
 // Static checks that stand in for a build: every source file parses, and
-// everything manifest.json points at exists. Run: npm run check
+// everything manifest.json points at, plus the models, exists. Run: npm run check
 import { readFileSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -12,6 +12,8 @@ let bad = 0;
 const referenced = [
   m.background.service_worker, m.side_panel.default_path,
   ...m.content_scripts.flatMap((c) => c.js), 'engine.html',
+  // Not in the manifest, but the engine fetches them. `npm run models` fills models/.
+  'models/det_10g.onnx', 'models/w600k_r50.onnx',
 ];
 for (const f of referenced) {
   if (!existsSync(join(root, f))) { console.log('MISSING', f); bad++; }

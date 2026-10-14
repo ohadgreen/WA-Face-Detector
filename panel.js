@@ -50,55 +50,17 @@ async function engine(op, args) {
 
 async function logEngine() {
   const s = await engine('status');
-  if (!s.models) { log('engine: models not set up'); return; }
+  if (!s.models) { log('engine: ' + NO_MODELS); return; }
   log(`engine: detector ${s.det}, recogniser ${s.rec} (${s.recMs}ms/face,` +
       ` navigator.gpu ${s.gpu ? 'present' : 'absent'})`);
   for (const n of s.notes) log('  ' + n);
 }
 
-/* ---------- model storage (IndexedDB, extension origin) ---------- */
-
-const idb = () => new Promise((res, rej) => {
-  const r = indexedDB.open('cpf-models', 1);
-  r.onupgradeneeded = () => r.result.createObjectStore('m');
-  r.onsuccess = () => res(r.result);
-  r.onerror = () => rej(r.error);
-});
-const idbGet = async (k) => {
-  const db = await idb();
-  return new Promise((res, rej) => {
-    const q = db.transaction('m').objectStore('m').get(k);
-    q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error);
-  });
-};
-const idbPut = async (k, v) => {
-  const db = await idb();
-  return new Promise((res, rej) => {
-    const tx = db.transaction('m', 'readwrite');
-    tx.objectStore('m').put(v, k);
-    tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
-  });
-};
+/* ---------- models (packaged in models/, loaded by the engine) ---------- */
 
 // Recognition runs in the engine (engine.js); this only asks whether it has models.
 const ensureModels = async () => (await engine('status')).models;
-
-async function showModelState() {
-  const have = (await idbGet('det')) && (await idbGet('rec'));
-  $('modelState').textContent = have ? tt('modelsStored') : tt('modelsNotSet');
-}
-
-for (const [inputId, key] of [['detFile', 'det'], ['recFile', 'rec']]) {
-  $(inputId).addEventListener('change', async (e) => {
-    const f = e.target.files[0];
-    if (!f) return;
-    log(`storing ${f.name} (${(f.size / 1e6).toFixed(0)}MB)...`);
-    await idbPut(key, await f.arrayBuffer());
-    await engine('reload');
-    await showModelState();
-    log('stored');
-  });
-}
+const NO_MODELS = 'models missing from the extension - run npm run models, then reload it';
 
 /* ---------- image helpers ---------- */
 
@@ -251,7 +213,7 @@ $('addWatch').addEventListener('click', async () => {
   saving = true;
   updateSaveState();
   try {
-    if (!(await ensureModels())) { log('set up the models first'); return; }
+    if (!(await ensureModels())) { log(NO_MODELS); return; }
     const files = [...$('refFiles').files];
     if (!files.length) { log('pick at least one reference photo'); return; }
     const name = $('childName').value.trim() || 'child';
@@ -424,7 +386,7 @@ $('stopBtn').addEventListener('click', () => {
 });
 
 async function scan(w) {
-  if (!(await ensureModels())) { log('set up the models first'); return; }
+  if (!(await ensureModels())) { log(NO_MODELS); return; }
   const { fresh, newest, otherChats } = await callPage('listNewImages', { chatId: w.src, since: sinceOf(w) });
   // Newest first: recent photos are the ones wanted, and the ones whose
   // media links are still valid. A stopped scan has covered the latest.
@@ -653,7 +615,6 @@ async function relang() {
   const next = await resolveUiLang();
   if (next === lang) return;
   applyLang(next);
-  await showModelState();
   await renderSetup();
   await renderWatches();
   if (current && !$('reviewCard').hidden) renderReviewText();
@@ -671,7 +632,6 @@ $('langPref').addEventListener('change', () => {
   try { applyLang(await resolveUiLang()); }
   catch (e) { log('language: ' + e.message); }
   finally { document.documentElement.classList.remove('i18n-pending'); }
-  await showModelState();
   await renderSetup();
   try { const p = await callPage('ping'); log(`connected to WhatsApp (wa-js ${p.version})`); }
   catch (e) { log(e.message); }
