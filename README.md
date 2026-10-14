@@ -16,6 +16,8 @@ without a keystroke from you.
 5. Pastes the ones you keep into a destination chat's composer. **You press Enter.**
 6. In a watched group, labels each album with how many photos of your child it
    contains; click a label to review just that album.
+7. Speaks English or Hebrew (right to left), following WhatsApp Web's
+   language. Setup → Language overrides it.
 
 Each watch is independent, so one child per group with its own threshold and
 destination.
@@ -137,6 +139,8 @@ relay.js           ISOLATED world relay
 panel.html/.js     side panel UI
 lib/face.js        SCRFD + ArcFace in plain JS
 lib/auto-state.js  auto-watch queue and cursor rules (pure, unit-tested)
+lib/i18n.js        English and Hebrew UI text, language choice (pure, unit-tested)
+_locales/          manifest name and description per browser language
 tests/             node --test unit tests
 scripts/vendor.mjs copies runtime files from node_modules into vendor/
 scripts/check.mjs  syntax + manifest path check
