@@ -167,6 +167,13 @@ Each of these cost a debugging session. Do not "simplify" them away.
   type, so other chats' images come back. `listNewImages` keeps messages whose
   `id.remote` is the watched chat. Do not drop that filter — it also stops
   `newest` (and so `lastSeen`) being advanced by another chat.
+- **The media query can also miss a photo the chat shows.** Seen: one of two
+  photos sent in the same second, neither a duplicate nor different in
+  download state. The scan never got it and its album label read "in
+  progress" for good. `listNewImages` therefore merges in the chat's loaded
+  messages (`ChatStore.get(chatId).msgs`, what the labels read) through
+  `chatImages` in `lib/album-label.js`. Keep both sources: the media query
+  reaches older photos the chat hasn't loaded.
 - **Older media links expire.** WhatsApp's CDN URLs carry an expiry (`oe=`, hex
   unix time); past it the fetch is a 403 and `downloadMedia` throws
   `Media not found`. The app recovers by asking the sender's phone to re-upload —

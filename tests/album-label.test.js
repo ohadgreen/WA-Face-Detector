@@ -144,3 +144,33 @@ test('rowPhotos: an unknown row or a text message has no photos', () => {
   assert.deepEqual(plain(rowPhotos('nope', idx)), { msg: null, photos: [] });
   assert.deepEqual(plain(rowPhotos('T1', idx).photos), []);
 });
+
+/* ---------- chatImages: what listNewImages scans ---------- */
+
+const { chatImages } = ctx.CpfAlbumLabel;
+const img = (id, t, over = {}) => ({ id, remote: 'g1@g.us', type: 'image', t, ...over });
+
+test("chatImages: a photo the media query skipped is still scanned if the chat has it", () => {
+  // Real case: WhatsApp's media query left out one of two photos sent in
+  // the same second, so its album label stayed "in progress" for ever.
+  const queried = [img('p1', 936), img('p3', 937)];
+  const loaded = [img('p1', 936), img('p2', 937), img('p3', 937)];
+  assert.deepEqual(plain(chatImages('g1@g.us', queried, loaded).map((m) => m.id).sort()), ['p1', 'p2', 'p3']);
+});
+
+test('chatImages: older photos only the media query knows are kept', () => {
+  const queried = [img('old', 10), img('p1', 936)];
+  const loaded = [img('p1', 936)];
+  assert.deepEqual(plain(chatImages('g1@g.us', queried, loaded).map((m) => m.id)), ['old', 'p1']);
+});
+
+test("chatImages: other chats' images and the chat's non-image messages are left out", () => {
+  const queried = [img('x', 5, { remote: 'other@g.us' }), img('p1', 6)];
+  const loaded = [img('p1', 6), img('a', 6, { type: 'album' }), img('v', 7, { type: 'video' })];
+  assert.deepEqual(plain(chatImages('g1@g.us', queried, loaded).map((m) => m.id)), ['p1']);
+});
+
+test('chatImages: oldest first, each photo once', () => {
+  const out = chatImages('g1@g.us', [img('b', 20), img('a', 10)], [img('c', 15), img('b', 20)]);
+  assert.deepEqual(plain(out.map((m) => m.id)), ['a', 'c', 'b']);
+});
