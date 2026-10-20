@@ -69,21 +69,23 @@
       await ready;
       const found = await WPP.chat.getMessages(chatId, { count: -1, media: 'image' });
       // On current builds getMessages goes through WhatsApp's media query and
-      // only filters by type, so images from other chats can come back. Keep
-      // this chat's own; `newest` must not be advanced by another chat either.
-      const msgs = found.filter((m) => m.id?.remote?.toString() === chatId);
+      // only filters by type, so images from other chats can come back.
+      // chatImages keeps this chat's own (`newest` must not be advanced by
+      // another chat either), and adds the chat's loaded images, because the
+      // media query can miss one the album labels count.
+      let loaded = [];
+      try { loaded = WPP.whatsapp.ChatStore.get(chatId).msgs.getModelsArray(); } catch { /* chat not loaded */ }
+      const rec = (m) => ({
+        id: m.id.toString(), remote: m.id?.remote?.toString(), type: m.type, t: m.t,
+        album: albumOf(m), w: m.width || 0, h: m.height || 0,
+      });
+      const msgs = CpfAlbumLabel.chatImages(chatId, found.map(rec), loaded.map(rec));
       const fresh = msgs
         .filter((m) => m.t > (since || 0))
-        .sort((a, b) => a.t - b.t)
-        .map((m) => ({
-          id: m.id.toString(),
-          t: m.t,
-          album: albumOf(m),
-          w: m.width || 0,
-          h: m.height || 0,
-        }));
+        .map(({ id, t, album, w, h }) => ({ id, t, album, w, h }));
       return {
-        total: msgs.length, fresh, otherChats: found.length - msgs.length,
+        total: msgs.length, fresh,
+        otherChats: found.filter((m) => m.id?.remote?.toString() !== chatId).length,
         newest: msgs.reduce((a, m) => Math.max(a, m.t), 0),
       };
     },
