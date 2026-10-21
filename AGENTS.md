@@ -20,7 +20,9 @@ Five contexts. Getting these confused is the most common source of bugs.
 
 ```
 panel.js / panel.html    extension origin (chrome-extension://)
-                         owns: all UI, thumbnails
+                         owns: all UI, thumbnails. One scrolling page, no tabs:
+                         Saved watches (its + opens the add form), watch
+                         cards, review, log
                          calls the engine for embedding and manual scans
 engine.js / engine.html  offscreen document, extension origin
                          owns: ORT sessions, lib/face.js, image decoding,
@@ -29,7 +31,7 @@ engine.js / engine.html  offscreen document, extension origin
 background.js            service worker (ES module)
                          owns: the engine's lifecycle, the auto-watch loop,
                          autoState + pending, badge, notifications, Alt+Shift+R,
-                         waLang, badge tooltip/notification language
+                         badge tooltip/notification language
         |  chrome.tabs.sendMessage  ->  { __cpf:'call', action, args }
         |  <-  chrome.runtime.sendMessage  { __cpf:'evt', type, data }
 relay.js                 ISOLATED content-script world
@@ -44,7 +46,7 @@ lib/i18n.js              pure: English + Hebrew dictionaries, resolveLang, t()
 ```
 
 Message tags: `call`/`req`/`res` are extension → page requests; `evt` is
-page → background events (`ready` with `{ lang }`, `lang`, `newImage`, `openAlbum`, `labelsBroken`); `engine` is a request to the
+page → background events (`ready`, `newImage`, `openAlbum`, `labelsBroken`); `engine` is a request to the
 engine; `bg` is a panel → background request. Every `chrome.runtime.sendMessage`
 reaches every extension context, so each listener ignores tags that aren't its own.
 
@@ -79,11 +81,10 @@ memory stays flat regardless of batch size. Do not batch-transfer whole albums.
 only by messaging it (`catchUp`, `markSeen`, `reset`). `pending` holds message
 ids and scores, never images.
 
-Language: `waLang` (the raw tag WhatsApp reported, or `null`) → background;
-`uiLangPref` (`'auto'` | `'en'` | `'he'`) → panel. The resolved language is
-never stored; the panel and the background each compute
-`resolveLang({ pref, wa, browser: chrome.i18n.getUILanguage() })`, so they
-can't disagree.
+Language: nothing is stored. The panel and the background each compute
+`resolveLang({ browser: chrome.i18n.getUILanguage() })`, so they can't
+disagree. (`waLang` and `uiLangPref` are gone since 0.16; the background
+removes them on install/update.)
 
 For the in-chat album labels the background also writes `found` (every match,
 ids and scores, kept after Mark as seen, pruned after `FOUND_DAYS` = 30),
@@ -246,13 +247,13 @@ to tune around, and not a bug to "fix".
 
 ## Language
 
-The UI follows WhatsApp Web's language (English or Hebrew; Hebrew is right
-to left), with an override in Setup. `page.js` reads it from `<html lang>`,
-which WhatsApp sets from its own setting. `localStorage`'s
-`WALangPhonePref` is the *phone's* language, not WhatsApp Web's - don't use
-it. `chrome.i18n` is not used for UI text: it answers only in the browser's
-language, fixed at browser start. It is used only for the manifest
-(`_locales/`), which `npm run check` verifies.
+The UI follows the browser's language (English or Hebrew, English for
+anything else; Hebrew is right to left). There is no picker, and WhatsApp
+Web's own language is deliberately not consulted (owner's decision, 0.16),
+so `page.js` reports no language. The language is read once, when the panel
+opens; it never switches live. `chrome.i18n` is used for the language tag
+and for the manifest (`_locales/`, which `npm run check` verifies), not for
+UI text.
 
 - User-facing text goes through `t()` from `lib/i18n.js` (`tt()` in the
   panel). Log text and error messages do not; the log stays English.

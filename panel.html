@@ -2,32 +2,31 @@
 <html lang="en" class="i18n-pending">
 <head>
 <meta charset="utf-8">
-<title>Class Photo Filter</title>
+<title>Spot My Kid</title>
 <style>
   :root { color-scheme: light; --line:#e2e2e6; --muted:#6b6b70; --accent:#1a7f4b; }
   * { box-sizing: border-box; }
   body { font-family: system-ui, -apple-system, sans-serif; margin: 0; font-size: 13px;
          background: #f7f7f8; color: #16161a; }
-  header { background: #fff; border-bottom: 1px solid var(--line); padding: 12px 14px 0;
-           position: sticky; top: 0; z-index: 5; }
-  header h1 { font-size: 14px; margin: 0 0 8px; }
-  .tabs { display: flex; gap: 2px; margin-bottom: -1px; }
-  .tabs button { border: 0; border-bottom: 2px solid transparent; background: none;
-                 padding: 7px 14px; cursor: pointer; font: inherit; font-size: 13px;
-                 font-weight: 600; color: var(--muted); }
-  .tabs button:hover { color: #16161a; }
-  .tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
   main { padding: 14px; }
-  section.pane { display: none; }
-  section.pane.on { display: block; }
   .card { background: #fff; border: 1px solid var(--line); border-radius: 9px;
           padding: 12px; margin-bottom: 12px; }
   .card h2 { font-size: 13px; margin: 0 0 8px; }
+  .card-head { display: flex; justify-content: space-between; align-items: center;
+               margin-bottom: 8px; }
+  .card-head h2 { margin: 0; }
+  #addToggle { padding: 6px 12px; font-weight: 600; }
+  #logToggle { padding: 4px 10px; font-size: 11.5px; }
   label { display: block; margin: 8px 0 3px; color: var(--muted); font-size: 11.5px;
           text-transform: uppercase; letter-spacing: .03em; }
   select, input[type=text], input[type=number] { width: 100%; padding: 6px 8px;
           border: 1px solid var(--line); border-radius: 6px; font-size: 13px; background: #fff; }
   input[type=file] { font-size: 11px; width: 100%; }
+  /* The reference photos are the one required step, so the browser's own
+     "Choose files" button is drawn like the primary buttons, only larger. */
+  input[type=file]::file-selector-button { background: var(--accent); color: #fff; border: 0;
+          border-radius: 7px; padding: 10px 18px; margin-inline-end: 10px; font-size: 13px;
+          font-weight: 600; cursor: pointer; }
   button.act { background: var(--accent); color: #fff; border: 0; border-radius: 7px;
                padding: 9px 14px; font-size: 13px; cursor: pointer; }
   button.act.ghost { background: #fff; color: #16161a; border: 1px solid var(--line); }
@@ -75,68 +74,53 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>Class Photo Filter</h1>
-  <nav class="tabs" role="tablist">
-    <button id="tabSetup" role="tab" aria-selected="false" aria-controls="paneSetup" data-i18n="tabSetup">Setup</button>
-    <button id="tabRun" role="tab" aria-selected="true" aria-controls="paneRun" class="on" data-i18n="tabPhotos">Photos</button>
-  </nav>
-</header>
-
 <main>
-  <section class="pane on" id="paneRun">
-    <div id="watchList"></div>
-    <div id="reviewCard" class="card" hidden>
-      <h2 id="reviewTitle">Matches</h2>
-      <p class="hint" id="reviewHint"></p>
-      <div class="row" style="margin:8px 0">
-        <button class="act" id="sendBtn" data-i18n="addToComposer">Add to composer</button>
-        <button class="act ghost" id="doneBtn" data-i18n="markSeen">Mark as seen</button>
-      </div>
-      <div class="grid" id="grid"></div>
-    </div>
-    <button class="act ghost" id="stopBtn" hidden data-i18n="stopScan">Stop scan</button>
-    <div id="log" dir="ltr">idle</div>
-  </section>
-
-  <section class="pane" id="paneSetup">
-    <div class="card">
-      <h2 data-i18n="language">Language</h2>
-      <select id="langPref">
-        <option value="auto" data-i18n="langAuto">Automatic (follow WhatsApp)</option>
-        <option value="en" lang="en" dir="ltr">English</option>
-        <option value="he" lang="he" dir="rtl">עברית</option>
-      </select>
-    </div>
-
-    <div class="card">
-      <h2 data-i18n="addGroup">Add a group to watch</h2>
-      <label data-i18n="watchThisGroup">Watch this group</label>
-      <input type="text" id="srcFilter" dir="auto" placeholder="filter by name..." data-i18n-ph="filterByName" style="margin-bottom:4px">
-      <select id="srcGroup" size="6"></select>
-      <button type="button" class="pick" id="srcPick">nothing selected</button>
-      <label data-i18n="sendMatchesTo">Send matches to</label>
-      <input type="text" id="dstFilter" dir="auto" placeholder="filter by name..." data-i18n-ph="filterByName" style="margin-bottom:4px">
-      <select id="dstGroup" size="6"></select>
-      <button type="button" class="pick" id="dstPick">nothing selected</button>
-      <label data-i18n="childName">Child's name</label><input type="text" id="childName" dir="auto" placeholder="e.g. Nir" data-i18n-ph="childNameExample">
-      <label data-i18n="refPhotos">Reference photos of that child</label>
-      <input type="file" id="refFiles" accept="image/*" multiple>
-      <label data-i18n="matchThreshold">Match threshold</label><input type="number" id="thresh" dir="ltr" value="0.35" step="0.01" min="0.05" max="0.9">
-      <p class="hint" data-i18n="thresholdHint">Start at 0.35. Lower it if the child is usually far from the camera.</p>
-      <label class="check"><input type="checkbox" id="autoWatch" checked>
-        <span data-i18n="autoWatchLabel">Auto-watch: check new photos in the background and alert me</span></label>
-      <div class="row" style="margin-top:10px">
-        <button class="act" id="addWatch" disabled data-i18n="saveWatch">Save watch</button>
-        <button class="act ghost" id="refreshGroups" data-i18n="reloadGroups">Reload groups</button>
-      </div>
-    </div>
-
-    <div class="card">
+  <div class="card">
+    <div class="card-head">
       <h2 data-i18n="savedWatches">Saved watches</h2>
-      <div id="setupList"></div>
+      <button type="button" class="act" id="addToggle" aria-expanded="false" aria-controls="addCard"
+        title="Add a group to watch" data-i18n-title="addGroup" data-i18n="addWatch">+ Add watch</button>
     </div>
-  </section>
+    <div id="setupList"></div>
+  </div>
+
+  <div class="card" id="addCard" hidden>
+    <h2 data-i18n="addGroup">Add a group to watch</h2>
+    <label data-i18n="watchThisGroup">Watch this group</label>
+    <input type="text" id="srcFilter" dir="auto" placeholder="filter by name..." data-i18n-ph="filterByName" style="margin-bottom:4px">
+    <select id="srcGroup" size="6"></select>
+    <button type="button" class="pick" id="srcPick">nothing selected</button>
+    <label data-i18n="sendMatchesTo">Send matches to</label>
+    <input type="text" id="dstFilter" dir="auto" placeholder="filter by name..." data-i18n-ph="filterByName" style="margin-bottom:4px">
+    <select id="dstGroup" size="6"></select>
+    <button type="button" class="pick" id="dstPick">nothing selected</button>
+    <label data-i18n="childName">Child's name</label><input type="text" id="childName" dir="auto" placeholder="e.g. Nir" data-i18n-ph="childNameExample">
+    <label data-i18n="refPhotos">Reference photos of that child</label>
+    <input type="file" id="refFiles" accept="image/*" multiple>
+    <label data-i18n="matchThreshold">Match threshold</label><input type="number" id="thresh" dir="ltr" value="0.35" step="0.01" min="0.05" max="0.9">
+    <p class="hint" data-i18n="thresholdHint">Start at 0.35. Lower it if the child is usually far from the camera.</p>
+    <label class="check"><input type="checkbox" id="autoWatch" checked>
+      <span data-i18n="autoWatchLabel">Auto-watch: check new photos in the background and alert me</span></label>
+    <div class="row" style="margin-top:10px">
+      <button class="act" id="addWatch" disabled data-i18n="saveWatch">Save watch</button>
+      <button class="act ghost" id="refreshGroups" data-i18n="reloadGroups">Reload groups</button>
+    </div>
+  </div>
+
+  <div id="watchList"></div>
+  <div id="reviewCard" class="card" hidden>
+    <h2 id="reviewTitle">Matches</h2>
+    <p class="hint" id="reviewHint"></p>
+    <div class="row" style="margin:8px 0">
+      <button class="act" id="sendBtn" data-i18n="addToComposer">Add to composer</button>
+      <button class="act ghost" id="doneBtn" data-i18n="markSeen">Mark as seen</button>
+    </div>
+    <div class="grid" id="grid"></div>
+  </div>
+  <button class="act ghost" id="stopBtn" hidden data-i18n="stopScan">Stop scan</button>
+  <button type="button" class="act ghost" id="logToggle" aria-expanded="false" aria-controls="log"
+    data-i18n="showLog">Show log</button>
+  <div id="log" dir="ltr" hidden>idle</div>
 </main>
 
 <script type="module" src="panel.js"></script>

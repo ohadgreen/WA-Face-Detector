@@ -1,4 +1,4 @@
-# Class Photo Filter
+# Spot My Kid
 
 A Chrome extension that finds photos of a specific child in WhatsApp group albums
 and queues the matches for another chat. Everything runs locally: face recognition
@@ -16,8 +16,7 @@ without a keystroke from you.
 5. Pastes the ones you keep into a destination chat's composer. **You press Enter.**
 6. In a watched group, labels each album with how many photos of your child it
    contains; click a label to review just that album.
-7. Speaks English or Hebrew (right to left), following WhatsApp Web's
-   language. Setup → Language overrides it.
+7. Speaks English or Hebrew (right to left), following the browser's language.
 
 Each watch is independent, so one child per group with its own threshold and
 destination.
@@ -34,10 +33,9 @@ models, see [Models](#models)). There is nothing to upload in the panel.
 Then in Chrome: `chrome://extensions` → Developer mode → **Load unpacked** → pick
 this folder.
 
-Open WhatsApp Web, click the extension icon to open the side panel, and go to
-**Setup**:
+Open WhatsApp Web and click the extension icon to open the side panel:
 
-1. **Add a watch** — source group, destination, child's name, a few reference
+1. **Add a watch** — press **+** next to *Saved watches*, then pick the source group, destination, child's name, a few reference
    photos, and a threshold. Leave **Auto-watch** ticked to have new photos
    checked in the background.
 2. **Keep WhatsApp Web active** — in `chrome://settings/performance`, add
@@ -164,10 +162,18 @@ extension pages aren't cross-origin isolated, so `SharedArrayBuffer` is absent.
 - Blurred and profile faces are missed. That's a limitation of the models, not a
   threshold you can tune around.
 
+## Credits
+
+<a href="https://www.flaticon.com/free-icons/magnifying-glass" title="magnifying-glass icons">Magnifying-glass icons created by Magnific - Flaticon</a>
+
+Flaticon's free license requires this credit wherever the icon is shown, so
+repeat it in the Chrome Web Store listing if the extension is published.
+
 ## Layout
 
 ```
 manifest.json      MV3 manifest
+icons/             toolbar and notification icon (16/32/48/128 px, resized from one 512 px PNG)
 background.js      service worker: auto-watch loop, badge, notifications, reload hotkey
 engine.html/.js    offscreen document: ONNX Runtime sessions and matching
 page.js            MAIN world bridge (wa-js)

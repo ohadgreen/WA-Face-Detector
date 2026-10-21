@@ -25,15 +25,6 @@
     r.readAsDataURL(blob);
   });
 
-  // WhatsApp's UI language, as the raw tag it uses (lib/i18n.js normalises
-  // it). Read only - nothing here changes WhatsApp's settings. WhatsApp sets
-  // <html lang> from its own language setting ("he" with dir="rtl" when set
-  // to Hebrew). Not localStorage's WALangPhonePref: that is the phone's
-  // language, and stays "en-GB" with WhatsApp Web in Hebrew (spec, Findings).
-  function waLanguage() {
-    return document.documentElement.lang || null;
-  }
-
   const actions = {
     async ping() {
       await ready;
@@ -150,11 +141,7 @@
      are reported, because only the background knows which chats are watched. */
   const emit = (type, data) => window.postMessage({ __cpf: 'evt', type, data }, '*');
   ready.then(() => {
-    emit('ready', { lang: waLanguage() });
-    // If WhatsApp ever switches language without reloading, follow it
-    // anyway. When it does reload, this never fires and 'ready' covers it.
-    new MutationObserver(() => emit('lang', { lang: waLanguage() }))
-      .observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] });
+    emit('ready', {});
     WPP.on('chat.new_message', (m) => {
       if (m?.type !== 'image') return;
       emit('newImage', { id: String(m.id), chatId: String(m.id.remote), t: m.t });
