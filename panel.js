@@ -3,9 +3,9 @@ import { t, resolveLang, dirOf, isSelfDst } from './lib/i18n.js';
 
 /* ---------- language ---------- */
 
-// Resolved from waLang (background) and uiLangPref (this panel) - never
-// stored, so the panel and the background can't disagree. User-facing text
-// goes through tt(); log() text stays English.
+// The browser's UI language (resolveLang), set once at start - there is no
+// override. Not stored; the background resolves it the same way, so the two
+// can't disagree. User-facing text goes through tt(); log() text stays English.
 let lang = 'en';
 const tt = (key, vars) => t(lang, key, vars);
 
@@ -105,9 +105,9 @@ async function loadGroups() {
 
   const opt = (x) => `<option value="${x.id}">${esc(x.name)}</option>`;
   $('srcGroup').innerHTML = g.map(opt).join('');
-  // The self chat and the headings carry data-i18n*, so applyStatic
-  // translates them on a switch without rebuilding the lists (which would
-  // lose the filters and scroll position).
+  // The self chat and the headings carry data-i18n*, so applyStatic can
+  // translate them without rebuilding the lists (which would lose the
+  // filters and scroll position).
   $('dstGroup').innerHTML =
     (self ? `<option value="${self.id}" data-i18n="messageYourself">${esc(tt('messageYourself'))}</option>` : '') +
     `<optgroup label="${esc(tt('groups'))}" data-i18n-label="groups">${g.map(opt).join('')}</optgroup>` +
@@ -246,6 +246,8 @@ $('addWatch').addEventListener('click', async () => {
     if ($('autoWatch').checked) await bg('catchUp');
     log(`saved: ${name} \u2014 watching "${picked.src.name}" \u2192 sending to "${picked.dst.name}"`);
     $('refFiles').value = ''; $('childName').value = '';
+    // Folded only on success: a failed save returns above with the form open.
+    await setAddOpen(false);
     await renderSetup(); await renderWatches();
   } catch (e) { log('ERROR: ' + e.message); }
   finally {
@@ -277,7 +279,13 @@ async function renderSetup() {
       </div>`).join('')
     : `<p class="hint">${tt('nothingYet')}</p>`;
 
-  const on = (sel, ev, fn) => $('setupList').querySelectorAll(sel).forEach((el) =>
+  // With no watches the form is the only thing to do, so it is open and the +
+  // is hidden (it would toggle a form that must stay open). This also covers
+  // removing the last watch, which would otherwise leave nothing to click.
+  $('addToggle').hidden = !watches.length;
+  if (!watches.length && $('addCard').hidden) await setAddOpen(true);
+
+  const on =(sel, ev, fn) => $('setupList').querySelectorAll(sel).forEach((el) =>
     el.addEventListener(ev, () => fn(el).catch((e) => log('ERROR: ' + e.message))));
 
   // The panel writes `auto` (watches is panel-owned); the background re-reads
@@ -320,10 +328,7 @@ async function renderWatches() {
   const watches = await getWatches();
   const { pending = {}, autoState = {} } = await chrome.storage.local.get(['pending', 'autoState']);
   const box = $('watchList');
-  if (!watches.length) {
-    box.innerHTML = `<div class="card"><p class="hint">${tt('noWatches')}</p></div>`;
-    return;
-  }
+  if (!watches.length) { box.innerHTML = ''; return; } // Saved watches says so
   const when = (sec) => new Date(sec * 1000).toLocaleString(lang);
   const route = (w) => `${nm(w.srcName)} ${tt('arrowTo')} ${nm(dstLabel(w))}`;
   const threshold = (w) => tt('thresholdIs', { v: w.threshold });
@@ -451,7 +456,7 @@ async function review(w, ids = null) {
       rows.push({ id: p.id, score: p.score, px: p.px, thumb: await thumbnail(dataUrl) });
     } catch (e) {
       rows.push({ id: p.id, score: p.score, px: p.px, thumb: null,
-        // 'expired' is translated when drawn, so a language switch reaches it.
+        // 'expired' is translated when drawn.
         gone: /media not found/i.test(e.message) ? 'expired' : e.message });
     }
   }
@@ -479,8 +484,8 @@ function renderReview() {
   renderReviewText();
 }
 
-// The review's words only. A language switch calls this and never rebuilds
-// the grid: that would tick again every photo the user had unticked.
+// The review's words only. Never rebuilds the grid: that would tick again
+// every photo the user had unticked.
 function renderReviewText() {
   const { watch, rows, skipped } = current;
   $('reviewTitle').innerHTML = tt('reviewTitle', { n: rows.length, name: nm(watch.name), album: !!current.album });
@@ -536,7 +541,6 @@ let albumHandled = 0;
 async function openAlbum(req) {
   if (!req || req.at <= albumHandled) return;
   albumHandled = req.at;
-  showTab('tabRun');
   const w = (await getWatches()).find((x) => x.id === req.watchId);
   if (!w) { log('that watch was removed'); return; }
   await review(w, req.ids);
@@ -560,35 +564,33 @@ chrome.storage.onChanged.addListener((changes, area) => {
     renderWatches().catch((e) => log(e.message));
     renderSetup().catch((e) => log(e.message));
   }
-  if (area === 'local' && (changes.waLang || changes.uiLangPref)) {
-    relang().catch((e) => log('language: ' + e.message));
-  }
 });
 
-/* ---------- tabs ---------- */
+/* ---------- the add form ---------- */
 
-function showTab(which) {
-  for (const [tab, pane] of [['tabRun', 'paneRun'], ['tabSetup', 'paneSetup']]) {
-    const on = tab === which;
-    $(tab).classList.toggle('on', on);
-    $(tab).setAttribute('aria-selected', on);
-    $(pane).classList.toggle('on', on);
-  }
+// Folded until the + in Saved watches opens it, and again after a save. The
+// chat list is read on the first open (and again if that read failed), so a
+// panel that never adds a watch never asks WhatsApp for it.
+async function setAddOpen(on) {
+  $('addCard').hidden = !on;
+  $('addToggle').setAttribute('aria-expanded', on);
+  if (on && !$('srcGroup').options.length) await loadGroups().catch((e) => log(e.message));
 }
-$('tabRun').addEventListener('click', () => showTab('tabRun'));
-$('tabSetup').addEventListener('click', async () => {
-  showTab('tabSetup');
-  if (!groups.length) await loadGroups().catch((e) => log(e.message));
-  else if (!$('srcGroup').options.length) await loadGroups().catch((e) => log(e.message));
+$('addToggle').addEventListener('click', () => setAddOpen($('addCard').hidden));
+
+// The log is the diagnostic surface, but most of the time it is noise, so it
+// starts folded. The button's data-i18n follows its state so applyStatic keeps
+// the right caption.
+$('logToggle').addEventListener('click', () => {
+  const on = $('log').hidden;
+  $('log').hidden = !on;
+  $('logToggle').setAttribute('aria-expanded', on);
+  $('logToggle').dataset.i18n = on ? 'hideLog' : 'showLog';
+  $('logToggle').textContent = tt(on ? 'hideLog' : 'showLog');
+  if (on) $('log').scrollTop = $('log').scrollHeight;
 });
 
 /* ---------- applying the language ---------- */
-
-async function resolveUiLang() {
-  const { waLang, uiLangPref } = await chrome.storage.local.get(['waLang', 'uiLangPref']);
-  $('langPref').value = uiLangPref || 'auto';
-  return resolveLang({ pref: uiLangPref, wa: waLang, browser: chrome.i18n.getUILanguage() });
-}
 
 // Everything marked up in panel.html, plus elements rendered later with the
 // same attributes (the self chat option, the destination list's headings).
@@ -599,8 +601,8 @@ function applyStatic() {
   for (const el of document.querySelectorAll('[data-i18n-label]')) el.label = tt(el.dataset.i18nLabel);
 }
 
-// Synchronous part: direction, static text, and the parts of Setup drawn
-// from variables (pick buttons, Save's "Still needed" tooltip).
+// Direction, static text, and the parts of the add form drawn from variables
+// (pick buttons, Save's "Still needed" tooltip).
 function applyLang(next) {
   lang = next;
   document.documentElement.lang = lang;
@@ -609,29 +611,14 @@ function applyLang(next) {
   showPick('src'); showPick('dst');
 }
 
-// A live switch: redraw everything with text in it. The open review only
-// has its words redrawn: its grid, thumbnails and ticks stay as they are.
-async function relang() {
-  const next = await resolveUiLang();
-  if (next === lang) return;
-  applyLang(next);
-  await renderSetup();
-  await renderWatches();
-  if (current && !$('reviewCard').hidden) renderReviewText();
-}
-
-// The panel writes uiLangPref (one writer); onChanged above applies it.
-$('langPref').addEventListener('change', () => {
-  chrome.storage.local.set({ uiLangPref: $('langPref').value });
-});
-
 (async () => {
   // Before anything is drawn: the body stays hidden (i18n-pending) until the
-  // language is set. finally, so a failed read shows the English panel
-  // rather than a blank one.
-  try { applyLang(await resolveUiLang()); }
+  // language is set. finally, so a failure shows the English panel rather
+  // than a blank one.
+  try { applyLang(resolveLang({ browser: chrome.i18n.getUILanguage() })); }
   catch (e) { log('language: ' + e.message); }
   finally { document.documentElement.classList.remove('i18n-pending'); }
+  // First run (no watches): renderSetup opens the form.
   await renderSetup();
   try { const p = await callPage('ping'); log(`connected to WhatsApp (wa-js ${p.version})`); }
   catch (e) { log(e.message); }

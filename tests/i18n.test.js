@@ -15,22 +15,21 @@ test('normalize: unsupported or missing is null', () => {
   for (const tag of ['fr', 'ar', 'hebrew', '', null, undefined, 42]) assert.equal(normalize(tag), null, String(tag));
 });
 
-test('resolveLang: an explicit preference wins over WhatsApp and the browser', () => {
-  assert.equal(resolveLang({ pref: 'en', wa: 'he', browser: 'he' }), 'en');
-  assert.equal(resolveLang({ pref: 'he', wa: 'en', browser: 'en-US' }), 'he');
+test('resolveLang: follows the browser language', () => {
+  assert.equal(resolveLang({ browser: 'he' }), 'he');
+  assert.equal(resolveLang({ browser: 'iw' }), 'he');
+  assert.equal(resolveLang({ browser: 'en-US' }), 'en');
 });
 
-test("resolveLang: 'auto', missing or garbage preference follows WhatsApp", () => {
-  for (const pref of ['auto', undefined, null, 'fr', '']) {
-    assert.equal(resolveLang({ pref, wa: 'he-IL', browser: 'en-US' }), 'he', String(pref));
-  }
-});
-
-test('resolveLang: no WhatsApp language falls back to the browser, then English', () => {
-  assert.equal(resolveLang({ wa: null, browser: 'he' }), 'he');
-  assert.equal(resolveLang({ wa: 'fr', browser: 'iw' }), 'he');   // unsupported WhatsApp tag
-  assert.equal(resolveLang({ wa: 'fr', browser: 'de' }), 'en');
+test('resolveLang: an unsupported or missing browser language is English', () => {
+  assert.equal(resolveLang({ browser: 'de' }), 'en');
+  assert.equal(resolveLang({ browser: undefined }), 'en');
   assert.equal(resolveLang({}), 'en');
+  assert.equal(resolveLang(), 'en');
+});
+
+test('resolveLang: ignores WhatsApp language and any saved preference', () => {
+  assert.equal(resolveLang({ wa: 'he', pref: 'he', browser: 'en-US' }), 'en');
 });
 
 test('dirOf', () => {
@@ -126,7 +125,7 @@ const squash = (x) => x.replace(/\s+/g, ' ').trim();
 
 test('panel.html: every data-i18n* key exists in the dictionary', () => {
   const keys = [...html.matchAll(/data-i18n(?:-ph|-title|-label)?="([^"]+)"/g)].map((m) => m[1]);
-  assert.ok(keys.length > 20, 'expected the panel to be marked up');
+  assert.ok(keys.length > 15, 'expected the panel to be marked up');
   for (const k of keys) assert.ok(k in STRINGS, `unknown key ${k}`);
 });
 

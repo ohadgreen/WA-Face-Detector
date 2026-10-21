@@ -15,7 +15,12 @@ chrome.commands.onCommand.addListener((cmd) => {
 
 // Up to 0.12 the user uploaded the models and the panel kept them in this
 // database. They ship in models/ now, so free the ~190MB the old copy holds.
-chrome.runtime.onInstalled.addListener(() => { indexedDB.deleteDatabase('cpf-models'); });
+chrome.runtime.onInstalled.addListener(() => {
+  indexedDB.deleteDatabase('cpf-models');
+  // Up to 0.15 the language followed WhatsApp, with a panel override; both
+  // keys are dead now.
+  chrome.storage.local.remove(['waLang', 'uiLangPref']);
+});
 
 // Duplicated in panel.js - change both. A watch never marked as seen starts
 // this far back, because WhatsApp's links for older media have expired.
@@ -33,22 +38,11 @@ function alog(s) {
   }).catch(() => {});
 }
 
-/* ---------- language: follows WhatsApp, as the panel does ---------- */
+/* ---------- language: the browser's, as the panel's ---------- */
 
-// Same inputs and the same resolveLang as the panel, so the tooltip and
-// notifications can't disagree with it. Never stored resolved.
-async function uiLang() {
-  const { waLang, uiLangPref } = await chrome.storage.local.get(['waLang', 'uiLangPref']);
-  return resolveLang({ pref: uiLangPref, wa: waLang, browser: chrome.i18n.getUILanguage() });
-}
-
-// waLang is written only here. Only on a change, so an open panel doesn't
-// re-render on every WhatsApp reload.
-async function saveWaLang(lang) {
-  const next = lang ?? null;
-  const { waLang = null } = await chrome.storage.local.get('waLang');
-  if (waLang !== next) await chrome.storage.local.set({ waLang: next });
-}
+// Same input and the same resolveLang as the panel, so the tooltip and
+// notifications can't disagree with it. Never stored.
+const uiLang = async () => resolveLang({ browser: chrome.i18n.getUILanguage() });
 
 /* ---------- engine (offscreen document) ---------- */
 
@@ -154,13 +148,10 @@ function pushLabels() {
   }, 1000);
 }
 
-// Auto-watch toggled or a watch removed in the panel (it owns `watches`), or
-// the language changed: labels and the tooltip are redrawn in it.
+// Auto-watch toggled or a watch removed in the panel (it owns `watches`):
+// the labels are redrawn in it.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local') return;
-  const relang = changes.waLang || changes.uiLangPref;
-  if (changes.watches || relang) pushLabels();
-  if (relang) updateBadge().catch(() => {});
+  if (area === 'local' && changes.watches) pushLabels();
 });
 
 // sidePanel.open needs the click's user gesture, so it is the first call,
@@ -184,25 +175,6 @@ let running = false;
 const batches = new Batcher(60_000);
 function onMatch(watchId) { batches.add(watchId, Date.now()); }
 
-// Basic notifications require an icon, and the extension ships none, so
-// draw one once.
-let iconUrl = null;
-async function notifyIcon() {
-  if (iconUrl) return iconUrl;
-  const cv = new OffscreenCanvas(128, 128);
-  const cx = cv.getContext('2d');
-  cx.fillStyle = '#1a7f4b';
-  cx.beginPath(); cx.roundRect(8, 8, 112, 112, 24); cx.fill();
-  cx.fillStyle = '#fff';
-  cx.font = 'bold 72px sans-serif';
-  cx.textAlign = 'center'; cx.textBaseline = 'middle';
-  cx.fillText('C', 64, 68);
-  const bytes = new Uint8Array(await (await cv.convertToBlob({ type: 'image/png' })).arrayBuffer());
-  let bin = '';
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return (iconUrl = 'data:image/png;base64,' + btoa(bin));
-}
-
 async function announce(drained) {
   const due = batches.due(Date.now(), drained);
   if (!due.length) return;
@@ -212,8 +184,8 @@ async function announce(drained) {
     const w = watches.find((x) => x.id === watchId);
     if (!w) continue;
     await chrome.notifications.create(`cpf-${watchId}-${Date.now()}`, {
-      type: 'basic', iconUrl: await notifyIcon(),
-      title: 'Class Photo Filter', message: notifyText(w, n, lang), priority: 1,
+      type: 'basic', iconUrl: 'icons/icon128.png',
+      title: 'Spot My Kid', message: notifyText(w, n, lang), priority: 1,
     });
     alog(`notified: ${notifyText(w, n, 'en')}`); // the log stays English
   }
@@ -350,11 +322,7 @@ let waTab = null;
 chrome.runtime.onMessage.addListener((msg, sender) => {
   if (msg?.__cpf !== 'evt') return;
   if (sender.tab) waTab = { id: sender.tab.id, windowId: sender.tab.windowId };
-  if (msg.type === 'ready') {
-    saveWaLang(msg.data?.lang).catch(() => {});
-    catchUp('WhatsApp ready'); pushLabels();
-  }
-  else if (msg.type === 'lang') saveWaLang(msg.data?.lang).catch(() => {});
+  if (msg.type === 'ready') { catchUp('WhatsApp ready'); pushLabels(); }
   else if (msg.type === 'newImage') onNewImage(msg.data);
   else if (msg.type === 'openAlbum') openAlbum(msg.data, sender);
   else if (msg.type === 'labelsBroken') {
