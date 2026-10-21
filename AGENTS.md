@@ -67,8 +67,7 @@ The models ship in the package; there is no upload step. `npm run models`
 or the `buffalo_l` release zip, and refuses any file whose SHA-256 doesn't match
 the hash pinned in `scripts/models.mjs`. Up to 0.12 the panel stored uploaded
 models in an IndexedDB database, `cpf-models`; the background deletes it on
-install/update. InsightFace licenses the models for non-commercial research only,
-so do not publish a packaged build without the owner clearing that. Do not move inference into a content script, and do not load ORT in
+install/update. InsightFace licenses the models for non-commercial research only. Do not move inference into a content script, and do not load ORT in
 the panel again — two copies means double the memory.
 
 Images cross each boundary as data URLs, **one at a time**. This is deliberate:
